@@ -96,6 +96,7 @@ type Defaults struct {
 	ProxyType                     string `json:"proxy_type"`
 	ProxyUsername                 string `json:"proxy_username"`
 	ReaderMaxWidth                int    `json:"reader_max_width"`
+	ReaderTitleFontSize           int    `json:"reader_title_font_size"`
 	RefreshMode                   string `json:"refresh_mode"`
 	RetryTimeoutSeconds           int    `json:"retry_timeout_seconds"`
 	RsshubAPIKey                  string `json:"rsshub_api_key"`
@@ -307,6 +308,8 @@ func GetString(key string) string {
 		return defaults.ProxyUsername
 	case "reader_max_width":
 		return strconv.Itoa(defaults.ReaderMaxWidth)
+	case "reader_title_font_size":
+		return strconv.Itoa(defaults.ReaderTitleFontSize)
 	case "refresh_mode":
 		return defaults.RefreshMode
 	case "retry_timeout_seconds":

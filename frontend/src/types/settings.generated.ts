@@ -83,6 +83,7 @@ export interface SettingsData {
   proxy_type: string;
   proxy_username: string;
   reader_max_width: number;
+  reader_title_font_size: number;
   refresh_mode: string;
   retry_timeout_seconds: number;
   rsshub_api_key: string;

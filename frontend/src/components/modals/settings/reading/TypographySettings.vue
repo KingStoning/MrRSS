@@ -7,6 +7,7 @@ import {
   READER_FONT_SIZE,
   READER_LINE_HEIGHT,
   READER_MAX_WIDTH,
+  READER_TITLE_FONT_SIZE,
   clampReaderSetting,
 } from '@/constants/reader';
 import type { SettingsData } from '@/types/settings';
@@ -26,6 +27,14 @@ const fontSize = computed(() =>
     READER_FONT_SIZE.min,
     READER_FONT_SIZE.max,
     READER_FONT_SIZE.default
+  )
+);
+const titleFontSize = computed(() =>
+  clampReaderSetting(
+    props.settings.reader_title_font_size,
+    READER_TITLE_FONT_SIZE.min,
+    READER_TITLE_FONT_SIZE.max,
+    READER_TITLE_FONT_SIZE.default
   )
 );
 const leadingPercent = computed(() =>
@@ -91,6 +100,31 @@ function updateSetting<K extends keyof SettingsData>(key: K, value: SettingsData
           "
         />
         <output>{{ fontSize }}px</output>
+      </label>
+    </SettingItem>
+
+    <SettingItem :title="t('setting.typography.titleFontSize')">
+      <template #description>{{ t('setting.typography.titleFontSizeDesc') }}</template>
+      <label class="reader-slider">
+        <input
+          type="range"
+          :min="READER_TITLE_FONT_SIZE.min"
+          :max="READER_TITLE_FONT_SIZE.max"
+          :step="READER_TITLE_FONT_SIZE.step"
+          :value="titleFontSize"
+          :aria-label="t('setting.typography.titleFontSize')"
+          :aria-valuemin="READER_TITLE_FONT_SIZE.min"
+          :aria-valuemax="READER_TITLE_FONT_SIZE.max"
+          :aria-valuenow="titleFontSize"
+          :aria-valuetext="`${titleFontSize}px`"
+          @input="
+            updateSetting(
+              'reader_title_font_size',
+              Number(($event.target as HTMLInputElement).value)
+            )
+          "
+        />
+        <output>{{ titleFontSize }}px</output>
       </label>
     </SettingItem>
 

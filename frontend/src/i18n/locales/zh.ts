@@ -767,6 +767,8 @@ const zh: TranslationMessages = {
       contentFontFamilyDesc: '文章内容的字体系列',
       contentFontSize: '正文字号',
       contentFontSizeDesc: '文章内容的字体大小',
+      titleFontSize: '标题字号',
+      titleFontSizeDesc: '文章标题的字体大小',
       contentLineHeight: '正文行高',
       contentLineHeightDesc: '文章内容的行间距',
       fontMonospace: '等宽字体',

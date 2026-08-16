@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import {
   PhWarningCircle,
   PhEyeSlash,
@@ -9,6 +9,7 @@ import {
 } from '@phosphor-icons/vue';
 import type { Feed } from '@/types/models';
 import { useI18n } from 'vue-i18n';
+import { getFeedAvatarColor, getFeedAvatarLabel } from '@/utils/feedAvatar';
 
 const { t } = useI18n();
 
@@ -35,6 +36,14 @@ const emit = defineEmits<{
 }>();
 
 const showErrorTooltip = ref(false);
+const iconFailed = ref(false);
+const iconSource = computed(() => props.feed.image_url || '');
+const fallbackLabel = computed(() => getFeedAvatarLabel(props.feed.title));
+const fallbackIconStyle = computed(() => ({ backgroundColor: getFeedAvatarColor(props.feed.id) }));
+
+watch(iconSource, () => {
+  iconFailed.value = false;
+});
 
 function getFriendlyErrorMessage(error: string): string {
   if (!error) return '';
@@ -71,14 +80,6 @@ function getFriendlyErrorMessage(error: string): string {
 
   // Return original error if no specific message found
   return error;
-}
-
-function getFavicon(url: string): string {
-  try {
-    return `https://www.google.com/s2/favicons?domain=${new URL(url).hostname}`;
-  } catch {
-    return '';
-  }
 }
 
 function isRSSHubFeed(feed: Feed): boolean {
@@ -123,12 +124,19 @@ function handleDragEnd() {
       <PhLock :size="14" />
     </div>
 
-    <div class="w-4 h-4 flex items-center justify-center shrink-0">
+    <div class="feed-avatar flex items-center justify-center shrink-0">
       <img
-        :src="feed.image_url || getFavicon(feed.url)"
+        v-if="iconSource && !iconFailed"
+        :src="iconSource"
         class="w-full h-full object-contain"
-        @error="($event.target as HTMLElement).style.display = 'none'"
+        :alt="feed.title"
+        loading="lazy"
+        draggable="false"
+        @error="iconFailed = true"
       />
+      <span v-else class="feed-avatar-fallback" :style="fallbackIconStyle" aria-hidden="true">
+        {{ fallbackLabel }}
+      </span>
     </div>
     <span class="truncate flex-1">{{ feed.title }}</span>
 
@@ -199,7 +207,12 @@ function handleDragEnd() {
 <style scoped>
 @reference "../../style.css";
 .feed-item {
-  @apply px-2 sm:px-3 py-1.5 sm:py-2 cursor-pointer rounded-md text-xs sm:text-sm text-text-primary flex items-center gap-1 hover:bg-bg-tertiary transition-colors;
+  @apply cursor-pointer rounded-md text-text-primary flex items-center hover:bg-bg-tertiary transition-colors;
+  min-height: 30px;
+  padding: 4px 8px;
+  gap: 7px;
+  font-size: 13px;
+  line-height: 1.25;
 }
 
 /* Compact mode: reduce padding and gap */
@@ -277,7 +290,30 @@ function handleDragEnd() {
   }
 }
 .feed-item.active {
-  @apply bg-bg-tertiary text-accent font-medium;
+  background: var(--selected-bg);
+  color: var(--accent-color);
+  font-weight: 500;
+}
+
+.feed-avatar {
+  width: 18px;
+  height: 18px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: white;
+}
+
+.feed-avatar-fallback {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--ui-font-family);
+  line-height: 1;
 }
 
 /* Dragging state styles */

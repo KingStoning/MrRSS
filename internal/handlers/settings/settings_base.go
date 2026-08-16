@@ -95,6 +95,7 @@ var AllSettings = []SettingDef{
 	{Key: "proxy_type", Encrypted: false},
 	{Key: "proxy_username", Encrypted: true},
 	{Key: "reader_max_width", Encrypted: false},
+	{Key: "reader_title_font_size", Encrypted: false},
 	{Key: "refresh_mode", Encrypted: false},
 	{Key: "retry_timeout_seconds", Encrypted: false},
 	{Key: "rsshub_api_key", Encrypted: true},

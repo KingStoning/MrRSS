@@ -91,6 +91,7 @@ export function generateInitialSettings(): SettingsData {
     proxy_type: settingsDefaults.proxy_type,
     proxy_username: settingsDefaults.proxy_username,
     reader_max_width: settingsDefaults.reader_max_width,
+    reader_title_font_size: settingsDefaults.reader_title_font_size,
     refresh_mode: settingsDefaults.refresh_mode,
     retry_timeout_seconds: settingsDefaults.retry_timeout_seconds,
     rsshub_api_key: settingsDefaults.rsshub_api_key,
@@ -231,6 +232,8 @@ export function parseSettingsData(data: Record<string, string>): SettingsData {
     proxy_type: data.proxy_type || settingsDefaults.proxy_type,
     proxy_username: data.proxy_username || settingsDefaults.proxy_username,
     reader_max_width: parseInt(data.reader_max_width) || settingsDefaults.reader_max_width,
+    reader_title_font_size:
+      parseInt(data.reader_title_font_size) || settingsDefaults.reader_title_font_size,
     refresh_mode: data.refresh_mode || settingsDefaults.refresh_mode,
     retry_timeout_seconds:
       parseInt(data.retry_timeout_seconds) || settingsDefaults.retry_timeout_seconds,
@@ -419,6 +422,9 @@ export function buildAutoSavePayload(settingsRef: Ref<SettingsData>): Record<str
     proxy_username: settingsRef.value.proxy_username ?? settingsDefaults.proxy_username,
     reader_max_width: (
       settingsRef.value.reader_max_width ?? settingsDefaults.reader_max_width
+    ).toString(),
+    reader_title_font_size: (
+      settingsRef.value.reader_title_font_size ?? settingsDefaults.reader_title_font_size
     ).toString(),
     refresh_mode: settingsRef.value.refresh_mode ?? settingsDefaults.refresh_mode,
     retry_timeout_seconds: (

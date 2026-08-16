@@ -77,6 +77,7 @@
   "proxy_type": "https",
   "proxy_username": "",
   "reader_max_width": 680,
+  "reader_title_font_size": 40,
   "refresh_mode": "fixed",
   "retry_timeout_seconds": 60,
   "rsshub_api_key": "",

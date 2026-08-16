@@ -24,7 +24,8 @@ import { useAppStore } from '@/stores/app';
 import { openInBrowser } from '@/utils/browser';
 import { proxyImagesInHtml, isMediaCacheEnabled } from '@/utils/mediaProxy';
 import { estimateReadingTime } from '@/utils/readingTime';
-import { READER_MAX_WIDTH, clampReaderSetting } from '@/constants/reader';
+import { READER_MAX_WIDTH, READER_TITLE_FONT_SIZE, clampReaderSetting } from '@/constants/reader';
+import { resolveFontFamily } from '@/utils/fontDetector';
 import './ArticleContent.css';
 
 interface SummaryResult {
@@ -164,12 +165,26 @@ const displayContent = computed(() => {
   return fullArticleContent.value || props.articleContent;
 });
 const readingMinutes = computed(() => estimateReadingTime(displayContent.value).minutes);
+const readerTitleFontFamily = computed(() =>
+  resolveFontFamily(
+    appSettings.value.content_font_family === 'system'
+      ? 'serif'
+      : appSettings.value.content_font_family
+  )
+);
 const readerStyle = computed(() => ({
   '--reader-max-width': `${clampReaderSetting(
     appSettings.value.reader_max_width,
     READER_MAX_WIDTH.min,
     READER_MAX_WIDTH.max,
     READER_MAX_WIDTH.default
+  )}px`,
+  '--reader-title-font-family': readerTitleFontFamily.value,
+  '--reader-title-font-size': `${clampReaderSetting(
+    appSettings.value.reader_title_font_size,
+    READER_TITLE_FONT_SIZE.min,
+    READER_TITLE_FONT_SIZE.max,
+    READER_TITLE_FONT_SIZE.default
   )}px`,
 }));
 
