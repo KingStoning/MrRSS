@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import {
   PhWarningCircle,
   PhEyeSlash,
@@ -37,6 +37,10 @@ const emit = defineEmits<{
 const showErrorTooltip = ref(false);
 const iconFailed = ref(false);
 const iconSource = computed(() => props.feed.image_url || getFavicon(props.feed.url));
+
+watch(iconSource, () => {
+  iconFailed.value = false;
+});
 
 const fallbackLabel = computed(() => props.feed.title.trim().charAt(0).toLocaleUpperCase() || 'R');
 const fallbackIconStyle = computed(() => {
@@ -87,7 +91,7 @@ function getFriendlyErrorMessage(error: string): string {
 
 function getFavicon(url: string): string {
   try {
-    return `https://www.google.com/s2/favicons?domain=${new URL(url).hostname}`;
+    return `https://www.google.com/s2/favicons?domain=${new URL(url).hostname}&sz=64`;
   } catch {
     return '';
   }
@@ -135,12 +139,17 @@ function handleDragEnd() {
       <PhLock :size="14" />
     </div>
 
-    <div class="feed-avatar flex items-center justify-center shrink-0">
+    <div
+      :class="['feed-avatar', { 'has-icon': iconSource && !iconFailed }]"
+      class="flex items-center justify-center shrink-0"
+    >
       <img
         v-if="iconSource && !iconFailed"
         :src="iconSource"
-        class="w-full h-full object-contain"
+        class="feed-avatar-image"
         :alt="feed.title"
+        loading="lazy"
+        draggable="false"
         @error="iconFailed = true"
       />
       <span v-else class="feed-avatar-fallback" :style="fallbackIconStyle" aria-hidden="true">
@@ -309,6 +318,17 @@ function handleDragEnd() {
   height: 18px;
   overflow: hidden;
   border-radius: 5px;
+}
+
+.feed-avatar.has-icon {
+  background: #fff;
+}
+
+.feed-avatar-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .feed-avatar-fallback {
