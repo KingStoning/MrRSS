@@ -128,7 +128,7 @@ function handleDragEnd() {
       <img
         v-if="iconSource && !iconFailed"
         :src="iconSource"
-        class="w-full h-full object-contain"
+        class="feed-avatar-image"
         :alt="feed.title"
         loading="lazy"
         draggable="false"
@@ -301,6 +301,13 @@ function handleDragEnd() {
   overflow: hidden;
   border-radius: 5px;
   background: white;
+}
+
+.feed-avatar-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .feed-avatar-fallback {
