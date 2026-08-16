@@ -13,11 +13,15 @@ interface Props {
   translationEnabled: boolean;
   translationSkipped?: boolean;
   isTranslatingContent?: boolean;
+  readingMinutes?: number;
+  showReadingTime?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   translationSkipped: false,
   isTranslatingContent: false,
+  readingMinutes: 1,
+  showReadingTime: true,
 });
 
 const emit = defineEmits<{
@@ -57,9 +61,9 @@ function selectArticleFeed() {
 
 <template>
   <!-- Title Section - Bilingual when translation enabled -->
-  <div class="mb-3 sm:mb-4">
+  <div class="article-heading mb-4 sm:mb-6">
     <!-- Original Title -->
-    <h1 class="text-xl sm:text-3xl font-bold leading-tight text-text-primary select-text">
+    <h1 class="reader-article-title text-text-primary select-text">
       {{ article.title }}
     </h1>
     <!-- Translated Title (shown below if different from original) -->
@@ -96,6 +100,9 @@ function selectArticleFeed() {
     </div>
     <div class="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
       <span class="text-text-secondary">{{ formatDateWithI18n(article.published_at) }}</span>
+      <span v-if="showReadingTime" class="text-text-secondary">
+        {{ t('article.content.readingTime', { minutes: readingMinutes }) }}
+      </span>
       <span
         v-if="translationEnabled"
         class="flex items-center gap-1.5 sm:gap-2"
@@ -117,3 +124,23 @@ function selectArticleFeed() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.reader-article-title {
+  max-width: 22ch;
+  margin: 0;
+  font-family: var(--reader-title-font-family);
+  font-size: clamp(2rem, 3.25vw, 3rem);
+  font-weight: 700;
+  line-height: 1.16;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+@media (max-width: 640px) {
+  .reader-article-title {
+    font-size: clamp(1.75rem, 8vw, 2.25rem);
+    letter-spacing: -0.025em;
+  }
+}
+</style>
