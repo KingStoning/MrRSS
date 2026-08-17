@@ -127,7 +127,7 @@ function selectArticleFeed() {
 
 <style scoped>
 .reader-article-title {
-  max-width: 22ch;
+  width: 100%;
   margin: 0;
   font-family: var(--reader-title-font-family);
   font-size: var(--reader-title-font-size, 38px);
