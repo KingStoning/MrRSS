@@ -36,26 +36,23 @@ const emit = defineEmits<{
 
 const showErrorTooltip = ref(false);
 const iconCandidateIndex = ref(0);
-
 const iconCandidates = computed(() => {
-  const candidates = [
-    props.feed.image_url,
-    getFavicon(props.feed.link || props.feed.website_url || props.feed.url),
-  ];
+  const siteUrls = [props.feed.link, props.feed.website_url, props.feed.url].filter(
+    (url): url is string => Boolean(url)
+  );
+  const candidates = [props.feed.image_url];
 
-  return candidates.filter(
-    (candidate, index, all): candidate is string =>
-      Boolean(candidate && all.indexOf(candidate) === index)
+  for (const siteUrl of siteUrls) {
+    candidates.push(getSiteFavicon(siteUrl), getGoogleFavicon(siteUrl));
+  }
+
+  return candidates.filter((candidate, index, all): candidate is string =>
+    Boolean(candidate && all.indexOf(candidate) === index)
   );
 });
+const iconSource = computed(() => iconCandidates.value[iconCandidateIndex.value] || '');
 
-const iconSource = computed(
-  () => iconCandidates.value[iconCandidateIndex.value] || ''
-);
-
-watch(iconCandidates, () => {
-  iconCandidateIndex.value = 0;
-});
+watch(iconCandidates, () => (iconCandidateIndex.value = 0));
 
 const fallbackLabel = computed(
   () => props.feed.title.trim().charAt(0).toLocaleUpperCase() || 'R'
@@ -135,11 +132,18 @@ function getFriendlyErrorMessage(error: string): string {
   return error;
 }
 
-function getFavicon(url: string): string {
+function getSiteFavicon(url: string): string {
   try {
-    return `https://www.google.com/s2/favicons?domain=${
-      new URL(url).hostname
-    }&sz=64`;
+    return new URL('/favicon.ico', url).href;
+  } catch {
+    return '';
+  }
+}
+
+function getGoogleFavicon(url: string): string {
+  try {
+    const hostname = new URL(url).hostname;
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`;
   } catch {
     return '';
   }

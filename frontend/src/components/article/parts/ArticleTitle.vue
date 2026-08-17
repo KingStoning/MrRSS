@@ -134,7 +134,10 @@ function selectArticleFeed() {
   font-weight: 700;
   line-height: 1.16;
   letter-spacing: -0.035em;
-  text-wrap: balance;
+  /* Keep the browser's normal line filling behavior. `balance` deliberately
+     makes multi-line headings similar widths, so reducing the font size could
+     still leave a title split over two lines even when the first line had room. */
+  text-wrap: wrap;
 }
 
 @media (max-width: 640px) {

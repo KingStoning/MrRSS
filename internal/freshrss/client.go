@@ -123,6 +123,8 @@ type Subscription struct {
 	ID         string     `json:"id"`
 	Title      string     `json:"title"`
 	URL        string     `json:"url"`
+	HTMLURL    string     `json:"htmlUrl"`
+	IconURL    string     `json:"iconUrl"`
 	Categories []Category `json:"categories"`
 }
 
