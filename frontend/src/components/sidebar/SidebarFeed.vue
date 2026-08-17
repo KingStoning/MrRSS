@@ -54,14 +54,28 @@ const iconSource = computed(() => iconCandidates.value[iconCandidateIndex.value]
 
 watch(iconCandidates, () => (iconCandidateIndex.value = 0));
 
-const fallbackLabel = computed(() => props.feed.title.trim().charAt(0).toLocaleUpperCase() || 'R');
+const fallbackLabel = computed(
+  () => props.feed.title.trim().charAt(0).toLocaleUpperCase() || 'R'
+);
+
 const fallbackIconStyle = computed(() => {
-  const palette = ['#c65f3d', '#d04747', '#3f62bf', '#129485', '#7555c7', '#2f8748'];
+  const palette = [
+    '#c65f3d',
+    '#d04747',
+    '#3f62bf',
+    '#129485',
+    '#7555c7',
+    '#2f8748',
+  ];
+
   const hash = Array.from(props.feed.title).reduce(
     (sum, character) => sum + character.codePointAt(0)!,
     0
   );
-  return { backgroundColor: palette[hash % palette.length] };
+
+  return {
+    backgroundColor: palette[hash % palette.length],
+  };
 });
 
 function getFriendlyErrorMessage(error: string): string {
@@ -71,13 +85,20 @@ function getFriendlyErrorMessage(error: string): string {
   if (error.includes('timeout') || error.includes('Timeout')) {
     return t('modal.feed.errorTimeout');
   }
+
   if (error.includes('connection') || error.includes('Connection')) {
     return t('modal.feed.errorConnection');
   }
+
   if (error.includes('dns') || error.includes('DNS')) {
     return t('modal.feed.errorDNS');
   }
-  if (error.includes('certificate') || error.includes('SSL') || error.includes('TLS')) {
+
+  if (
+    error.includes('certificate') ||
+    error.includes('SSL') ||
+    error.includes('TLS')
+  ) {
     return t('modal.feed.errorCertificate');
   }
 
@@ -85,15 +106,25 @@ function getFriendlyErrorMessage(error: string): string {
   if (error.includes('404')) {
     return t('modal.feed.errorNotFound');
   }
+
   if (error.includes('401') || error.includes('403')) {
     return t('modal.feed.errorUnauthorized');
   }
-  if (error.includes('500') || error.includes('502') || error.includes('503')) {
+
+  if (
+    error.includes('500') ||
+    error.includes('502') ||
+    error.includes('503')
+  ) {
     return t('modal.feed.errorServer');
   }
 
   // Feed format errors
-  if (error.includes('XML') || error.includes('parse') || error.includes('invalid')) {
+  if (
+    error.includes('XML') ||
+    error.includes('parse') ||
+    error.includes('invalid')
+  ) {
     return t('modal.feed.errorInvalidFormat');
   }
 
@@ -137,7 +168,11 @@ function handleDragEnd() {
 
 <template>
   <div
-    :class="['feed-item', isActive ? 'active' : '', props.compactMode ? 'compact' : '']"
+    :class="[
+      'feed-item',
+      isActive ? 'active' : '',
+      props.compactMode ? 'compact' : '',
+    ]"
     :data-feed-id="feed.id"
     :data-level="level || 0"
     @click="emit('click')"
@@ -177,11 +212,20 @@ function handleDragEnd() {
         draggable="false"
         @error="handleIconError"
       />
-      <span v-else class="feed-avatar-fallback" :style="fallbackIconStyle" aria-hidden="true">
+
+      <span
+        v-else
+        class="feed-avatar-fallback"
+        :style="fallbackIconStyle"
+        aria-hidden="true"
+      >
         {{ fallbackLabel }}
       </span>
     </div>
-    <span class="truncate flex-1">{{ feed.title }}</span>
+
+    <span class="truncate flex-1">
+      {{ feed.title }}
+    </span>
 
     <!-- RSSHub indicator -->
     <img
@@ -191,12 +235,14 @@ function handleDragEnd() {
       :title="t('setting.rsshub.feed')"
       alt="RSSHub"
     />
+
     <PhImage
       v-if="feed.is_image_mode"
       :size="16"
       class="text-accent shrink-0"
       :title="t('setting.feed.imageMode')"
     />
+
     <PhEyeSlash
       v-if="feed.hide_from_timeline"
       :size="16"
@@ -211,7 +257,10 @@ function handleDragEnd() {
       @mouseenter="showErrorTooltip = true"
       @mouseleave="showErrorTooltip = false"
     >
-      <PhWarningCircle :size="16" class="text-yellow-500 shrink-0" />
+      <PhWarningCircle
+        :size="16"
+        class="text-yellow-500 shrink-0"
+      />
 
       <!-- Error tooltip -->
       <Transition
@@ -228,12 +277,21 @@ function handleDragEnd() {
         >
           <div class="px-2.5 py-2">
             <div class="flex items-start gap-2">
-              <PhWarningCircle :size="14" class="text-yellow-500 shrink-0 mt-0.5" />
+              <PhWarningCircle
+                :size="14"
+                class="text-yellow-500 shrink-0 mt-0.5"
+              />
+
               <div class="flex-1 min-w-0">
-                <div class="text-xs font-semibold text-text-primary mb-1">
+                <div
+                  class="text-xs font-semibold text-text-primary mb-1"
+                >
                   {{ t('setting.update.updateFailed') }}
                 </div>
-                <div class="text-xs text-text-secondary break-words leading-relaxed">
+
+                <div
+                  class="text-xs text-text-secondary break-words leading-relaxed"
+                >
                   {{ getFriendlyErrorMessage(feed.last_error) }}
                 </div>
               </div>
@@ -243,12 +301,18 @@ function handleDragEnd() {
       </Transition>
     </div>
 
-    <span v-if="unreadCount > 0" class="unread-badge">{{ unreadCount }}</span>
+    <span
+      v-if="unreadCount > 0"
+      class="unread-badge"
+    >
+      {{ unreadCount }}
+    </span>
   </div>
 </template>
 
 <style scoped>
 @reference "../../style.css";
+
 .feed-item {
   @apply cursor-pointer rounded-md text-text-primary flex items-center hover:bg-bg-tertiary transition-colors;
   min-height: 30px;
@@ -332,6 +396,7 @@ function handleDragEnd() {
     padding-left: calc(0.5rem + 4rem);
   }
 }
+
 .feed-item.active {
   background: var(--selected-bg);
   color: var(--accent-color);
@@ -372,6 +437,7 @@ function handleDragEnd() {
 .feed-item[draggable='true']:active {
   opacity: 0.8;
 }
+
 /* Drag ghost image styling - applied during drag */
 .feed-item.dragging {
   opacity: 0.5;
@@ -384,9 +450,14 @@ function handleDragEnd() {
   margin-right: 2px;
   border-radius: 2px;
 }
+
 .drag-handle:hover {
-  background-color: var(--color-bg-tertiary, rgba(0, 0, 0, 0.05));
+  background-color: var(
+    --color-bg-tertiary,
+    rgba(0, 0, 0, 0.05)
+  );
 }
+
 .drag-handle:active {
   cursor: grabbing;
 }
@@ -407,6 +478,7 @@ function handleDragEnd() {
 
 <style>
 @reference "../../style.css";
+
 .dark-mode .unread-badge {
   background-color: rgba(100, 100, 100, 0.4) !important;
   color: #d0d0d0 !important;
