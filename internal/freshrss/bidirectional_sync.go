@@ -545,6 +545,24 @@ func (s *BidirectionalSyncService) createFeedsFromSubscriptions(ctx context.Cont
 					log.Printf("Updated feed '%s' with category '%s'", feedTitle, updateCategory)
 				}
 			}
+
+			// FreshRSS exposes the original website and icon through the Google
+			// Reader subscription API. Persist them separately from the feed URL
+			// so the sidebar does not have to guess from a proxy/feed endpoint.
+			if sub.HTMLURL != "" && existingFeed.Link != sub.HTMLURL {
+				if err := s.db.UpdateFeedLink(existingFeed.ID, sub.HTMLURL); err != nil {
+					log.Printf("Warning: Failed to update website for feed %s: %v", feedURL, err)
+				} else {
+					feedsCreated++
+				}
+			}
+			if sub.IconURL != "" && existingFeed.ImageURL != sub.IconURL {
+				if err := s.db.UpdateFeedImage(existingFeed.ID, sub.IconURL); err != nil {
+					log.Printf("Warning: Failed to update icon for feed %s: %v", feedURL, err)
+				} else {
+					feedsCreated++
+				}
+			}
 			continue
 		}
 
@@ -563,7 +581,8 @@ func (s *BidirectionalSyncService) createFeedsFromSubscriptions(ctx context.Cont
 		newFeed := &models.Feed{
 			URL:              feedURL,
 			Title:            feedTitle,
-			Link:             feedURL,
+			Link:             sub.HTMLURL,
+			ImageURL:         sub.IconURL,
 			Description:      "",
 			Category:         category,
 			IsFreshRSSSource: true,
