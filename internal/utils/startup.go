@@ -2,11 +2,15 @@ package utils
 
 import (
 	"fmt"
+	"html"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
+
+	"MrRSS/internal/utils/fileutil"
 )
 
 // EnableStartup enables the application to start on system boot
@@ -44,12 +48,19 @@ func DisableStartup() error {
 
 // Windows implementation using registry
 func enableStartupWindows(executable string) error {
+	command := `"` + executable + `" --start-minimized`
+	if dir := fileutil.CustomDataDir(); dir != "" && !fileutil.DesktopStorageManaged() {
+		// Windows paths cannot contain quotes; double trailing slashes before
+		// the closing quote (notably when the chosen directory is a drive root).
+		trimmed := strings.TrimRight(dir, `\`)
+		command += ` --data-dir "` + trimmed + strings.Repeat(`\`, 2*(len(dir)-len(trimmed))) + `"`
+	}
 	// Use reg.exe to add registry entry
 	cmd := exec.Command("reg", "add",
 		"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
 		"/v", "MrRSS",
 		"/t", "REG_SZ",
-		"/d", fmt.Sprintf("\"%s\"", executable),
+		"/d", command,
 		"/f")
 
 	output, err := cmd.CombinedOutput()
@@ -85,12 +96,27 @@ func disableStartupWindows() error {
 
 // Linux implementation using .desktop file in autostart
 func enableStartupLinux(executable string) error {
-	homeDir, err := os.UserHomeDir()
+	// APPIMAGE identifies the persistent outer file, not the transient mount.
+	if appImage := os.Getenv("APPIMAGE"); appImage != "" {
+		executable = appImage
+	}
+	execValue, err := desktopExec(executable)
 	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+		return err
+	}
+	execValue += " --start-minimized"
+	if dir := fileutil.CustomDataDir(); dir != "" && !fileutil.DesktopStorageManaged() {
+		quotedDir, err := desktopExec(dir)
+		if err != nil {
+			return err
+		}
+		execValue += " --data-dir " + quotedDir
+	}
+	autostartDir, err := linuxAutostartDir()
+	if err != nil {
+		return err
 	}
 
-	autostartDir := filepath.Join(homeDir, ".config", "autostart")
 	if err := os.MkdirAll(autostartDir, 0755); err != nil {
 		return fmt.Errorf("failed to create autostart directory: %w", err)
 	}
@@ -103,7 +129,7 @@ Exec=%s
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
-`, executable)
+`, execValue)
 
 	if err := os.WriteFile(desktopFile, []byte(content), 0644); err != nil {
 		return fmt.Errorf("failed to write desktop file: %w", err)
@@ -114,12 +140,12 @@ X-GNOME-Autostart-enabled=true
 }
 
 func disableStartupLinux() error {
-	homeDir, err := os.UserHomeDir()
+	autostartDir, err := linuxAutostartDir()
 	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+		return err
 	}
 
-	desktopFile := filepath.Join(homeDir, ".config", "autostart", "mrrss.desktop")
+	desktopFile := filepath.Join(autostartDir, "mrrss.desktop")
 	if err := os.Remove(desktopFile); err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to remove desktop file: %w", err)
@@ -128,6 +154,28 @@ func disableStartupLinux() error {
 
 	log.Println("Startup disabled for Linux")
 	return nil
+}
+
+func linuxAutostartDir() (string, error) {
+	if configDir := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(configDir) {
+		return filepath.Join(configDir, "autostart"), nil
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	return filepath.Join(homeDir, ".config", "autostart"), nil
+}
+
+// desktopExec quotes one executable according to the Desktop Entry Exec grammar.
+// Escape argument quoting first, then the desktop file's string escaping layer.
+func desktopExec(executable string) (string, error) {
+	if !filepath.IsAbs(executable) || strings.ContainsAny(executable, "\x00\r\n") {
+		return "", fmt.Errorf("startup executable must be an absolute path without line breaks")
+	}
+	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "`", "\\`", "$", `\$`, "%", "%%").Replace(executable)
+	escaped = strings.NewReplacer(`\`, `\\`, "\t", `\t`).Replace(escaped)
+	return `"` + escaped + `"`, nil
 }
 
 // macOS implementation using LaunchAgents plist
@@ -151,13 +199,13 @@ func enableStartupDarwin(executable string) error {
 	<string>com.mrrss.app</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>%s</string>
+		%s
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
 </dict>
 </plist>
-`, executable)
+`, startupDarwinArguments(executable))
 
 	if err := os.WriteFile(plistFile, []byte(content), 0644); err != nil {
 		return fmt.Errorf("failed to write plist file: %w", err)
@@ -165,6 +213,14 @@ func enableStartupDarwin(executable string) error {
 
 	log.Printf("Startup enabled for macOS: %s", plistFile)
 	return nil
+}
+
+func startupDarwinArguments(executable string) string {
+	args := "<string>" + html.EscapeString(executable) + "</string>\n\t\t<string>--start-minimized</string>"
+	if dir := fileutil.CustomDataDir(); dir != "" && !fileutil.DesktopStorageManaged() {
+		args += "\n\t\t<string>--data-dir</string>\n\t\t<string>" + html.EscapeString(dir) + "</string>"
+	}
+	return args
 }
 
 func disableStartupDarwin() error {

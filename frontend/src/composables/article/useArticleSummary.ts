@@ -1,6 +1,7 @@
 import { ref, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Article } from '@/types/models';
+import { getAIErrorMessage, readAIError } from '@/utils/aiError';
 
 interface SummarySettings {
   enabled: boolean;
@@ -30,7 +31,7 @@ export function useArticleSummary() {
   });
   const summaryCache: Ref<Map<number, SummaryResult>> = ref(new Map());
   const loadingSummaries: Ref<Set<number>> = ref(new Set());
-  const abortControllers: Ref<Map<number, any>> = ref(new Map());
+  const abortControllers: Ref<Map<number, AbortController>> = ref(new Map());
 
   // Load summary settings
   async function loadSummarySettings(): Promise<void> {
@@ -64,8 +65,9 @@ export function useArticleSummary() {
     }
 
     // Check in-memory cache (for summaries generated in current session)
-    if (summaryCache.value.has(article.id)) {
-      return summaryCache.value.get(article.id) || null;
+    const cached = summaryCache.value.get(article.id);
+    if (cached && !cached.used_fallback && !cached.error) {
+      return cached;
     }
 
     // Check if already loading
@@ -80,12 +82,8 @@ export function useArticleSummary() {
     }
 
     // Create new AbortController for this request
-    const controller = (window as any).AbortController
-      ? new (window as any).AbortController()
-      : null;
-    if (controller) {
-      abortControllers.value.set(article.id, controller);
-    }
+    const controller = new AbortController();
+    abortControllers.value.set(article.id, controller);
     loadingSummaries.value.add(article.id);
 
     try {
@@ -102,6 +100,9 @@ export function useArticleSummary() {
 
       if (res.ok) {
         const data: SummaryResult = await res.json();
+        if (controller.signal.aborted || abortControllers.value.get(article.id) !== controller) {
+          return null;
+        }
         summaryCache.value.set(article.id, data);
 
         // Show notification if AI limit was reached
@@ -116,17 +117,9 @@ export function useArticleSummary() {
 
         return data;
       } else {
-        // Handle API errors properly
-        let errorMessage = `${t('setting.content.summaryGenerationFailed')}: ${res.status} ${res.statusText}`;
-
-        try {
-          const errorData = await res.json();
-          if (errorData.error) {
-            errorMessage = errorData.error;
-          }
-        } catch (jsonError) {
-          // If we can't parse JSON, use the status text
-          console.error('Error parsing error response:', jsonError);
+        const { message: errorMessage } = await readAIError(res);
+        if (controller.signal.aborted || abortControllers.value.get(article.id) !== controller) {
+          return null;
         }
 
         console.error('Summary generation failed:', errorMessage);
@@ -144,11 +137,11 @@ export function useArticleSummary() {
       }
     } catch (e) {
       // Ignore aborted requests (user switched to another article)
-      if (e instanceof Error && e.name === 'AbortError') {
+      if (controller.signal.aborted || (e instanceof Error && e.name === 'AbortError')) {
         return null;
       }
 
-      const errorMessage = `${t('setting.content.summaryGenerationFailed')}: ${e instanceof Error ? e.message : t('common.errors.unknownError')}`;
+      const errorMessage = getAIErrorMessage(e);
       console.error('Error generating summary:', e);
 
       // Cache the error to show in UI
@@ -162,8 +155,10 @@ export function useArticleSummary() {
 
       return errorResult;
     } finally {
-      loadingSummaries.value.delete(article.id);
-      abortControllers.value.delete(article.id);
+      if (abortControllers.value.get(article.id) === controller) {
+        loadingSummaries.value.delete(article.id);
+        abortControllers.value.delete(article.id);
+      }
     }
   }
 

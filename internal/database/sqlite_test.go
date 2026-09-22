@@ -2,8 +2,11 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +52,37 @@ func TestDatabaseInitialization(t *testing.T) {
 	}
 
 	// Schema version table removed in development - skip version check
+}
+
+func TestGetTagsReturnsEmptyJSONArray(t *testing.T) {
+	db, err := NewDB(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Init(); err != nil {
+		t.Fatalf("Failed to initialize database: %v", err)
+	}
+
+	tags, err := db.GetTags()
+	if err != nil {
+		t.Fatalf("Failed to get tags: %v", err)
+	}
+	if tags == nil {
+		t.Fatal("Expected an empty tag slice, got nil")
+	}
+	if len(tags) != 0 {
+		t.Fatalf("Expected no tags, got %d", len(tags))
+	}
+
+	encoded, err := json.Marshal(tags)
+	if err != nil {
+		t.Fatalf("Failed to encode tags: %v", err)
+	}
+	if string(encoded) != "[]" {
+		t.Fatalf("Expected empty JSON array, got %s", encoded)
+	}
 }
 
 func TestDatabasePerformanceWithIndexes(t *testing.T) {
@@ -323,9 +357,7 @@ func TestCleanupOldArticles(t *testing.T) {
 }
 
 func TestCleanupUnimportantArticles(t *testing.T) {
-	// Create temporary database
-	dbFile := "test_cleanup_unimportant.db"
-	defer os.Remove(dbFile)
+	dbFile := filepath.Join(t.TempDir(), "test_cleanup_unimportant.db")
 
 	db, err := NewDB(dbFile)
 	if err != nil {
@@ -357,7 +389,8 @@ func TestCleanupUnimportantArticles(t *testing.T) {
 		{FeedID: feedID, Title: "Unread Unfav", URL: "https://example.com/1", PublishedAt: time.Now(), IsRead: false, IsFavorite: false},
 		{FeedID: feedID, Title: "Read Unfav", URL: "https://example.com/2", PublishedAt: time.Now(), IsRead: true, IsFavorite: false},
 		{FeedID: feedID, Title: "Unread Fav", URL: "https://example.com/3", PublishedAt: time.Now(), IsRead: false, IsFavorite: true},
-		{FeedID: feedID, Title: "Read Fav", URL: "https://example.com/4", PublishedAt: time.Now(), IsRead: true, IsFavorite: true},
+		{FeedID: feedID, Title: "Unread Read Later", URL: "https://example.com/4", PublishedAt: time.Now(), IsReadLater: true},
+		{FeedID: feedID, Title: "Read Fav", URL: "https://example.com/5", PublishedAt: time.Now(), IsRead: true, IsFavorite: true},
 	}
 
 	for _, article := range articles {
@@ -365,6 +398,28 @@ func TestCleanupUnimportantArticles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to save article: %v", err)
 		}
+	}
+
+	savedArticles, err := db.GetArticles("", feedID, "", false, 100, 0)
+	if err != nil {
+		t.Fatalf("Failed to load saved articles: %v", err)
+	}
+	articleIDs := make(map[string]int64, len(savedArticles))
+	for _, article := range savedArticles {
+		articleIDs[article.Title] = article.ID
+		if err := db.SetArticleContent(article.ID, "cached content for "+article.Title); err != nil {
+			t.Fatalf("Failed to cache content for %q: %v", article.Title, err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE article_contents SET fetched_at = datetime('now', '-8 days')`); err != nil {
+		t.Fatalf("Failed to age article content cache: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO translation_cache (
+			source_text_hash, source_text, target_lang, translated_text, provider, created_at
+		) VALUES ('old-hash', 'source', 'en', 'translated', 'test', datetime('now', '-8 days'))
+	`); err != nil {
+		t.Fatalf("Failed to insert translation cache: %v", err)
 	}
 
 	// Run cleanup
@@ -380,8 +435,8 @@ func TestCleanupUnimportantArticles(t *testing.T) {
 
 	// Verify remaining articles
 	remainingArticles, _ := db.GetArticles("", feedID, "", false, 100, 0)
-	if len(remainingArticles) != 3 {
-		t.Errorf("Expected 3 articles after cleanup, got %d", len(remainingArticles))
+	if len(remainingArticles) != 4 {
+		t.Errorf("Expected 4 articles after cleanup, got %d", len(remainingArticles))
 	}
 
 	// Verify the right articles remain
@@ -390,10 +445,166 @@ func TestCleanupUnimportantArticles(t *testing.T) {
 		titles[a.Title] = true
 	}
 
-	expectedTitles := []string{"Read Unfav", "Unread Fav", "Read Fav"}
+	expectedTitles := []string{"Read Unfav", "Unread Fav", "Unread Read Later", "Read Fav"}
 	for _, expected := range expectedTitles {
 		if !titles[expected] {
 			t.Errorf("Expected article '%s' to remain after cleanup", expected)
 		}
+		content, found, err := db.GetArticleContent(articleIDs[expected])
+		if err != nil || !found || content == "" {
+			t.Errorf("Expected cached content for %q to remain, found=%v, err=%v", expected, found, err)
+		}
+	}
+
+	if _, found, err := db.GetArticleContent(articleIDs["Unread Unfav"]); err != nil {
+		t.Fatalf("Failed to check deleted article content: %v", err)
+	} else if found {
+		t.Error("Expected deleted article content to be removed by cascade")
+	}
+
+	var translationCacheCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM translation_cache WHERE source_text_hash = 'old-hash'`).Scan(&translationCacheCount); err != nil {
+		t.Fatalf("Failed to count translation cache: %v", err)
+	}
+	if translationCacheCount != 1 {
+		t.Fatalf("Expected unrelated translation cache to remain, got %d", translationCacheCount)
+	}
+
+	secondCount, err := db.CleanupUnimportantArticles()
+	if err != nil {
+		t.Fatalf("Second cleanup failed: %v", err)
+	}
+	if secondCount != 0 {
+		t.Fatalf("Expected idempotent cleanup to delete 0 articles, deleted %d", secondCount)
+	}
+}
+
+func TestSearchArticlesWithTermsRanksAndExplainsMatches(t *testing.T) {
+	db, err := NewDB(":memory:")
+	if err != nil {
+		t.Fatalf("NewDB error: %v", err)
+	}
+	defer db.Close()
+	if err := db.Init(); err != nil {
+		t.Fatalf("Init error: %v", err)
+	}
+
+	result, err := db.Exec(`INSERT INTO feeds (url, title) VALUES (?, ?)`, "https://example.com/feed", "Example")
+	if err != nil {
+		t.Fatalf("insert feed: %v", err)
+	}
+	feedID, _ := result.LastInsertId()
+	insertArticle := func(title, originalSummary string, hidden bool) int64 {
+		t.Helper()
+		row, insertErr := db.Exec(`
+			INSERT INTO articles (feed_id, title, url, published_at, original_summary, is_hidden)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, feedID, title, "https://example.com/"+title, time.Now(), originalSummary, hidden)
+		if insertErr != nil {
+			t.Fatalf("insert article %q: %v", title, insertErr)
+		}
+		id, _ := row.LastInsertId()
+		return id
+	}
+
+	titleID := insertArticle("AI safety engineering guide", "Practical controls", false)
+	summaryID := insertArticle("Engineering notes", "A guide to AI safety evaluations", false)
+	contentID := insertArticle("Research digest", "Weekly research", false)
+	hiddenID := insertArticle("AI safety hidden article", "must stay hidden", true)
+	if err := db.SetArticleContent(contentID, `<p>Hands-on <strong>AI safety</strong> testing.</p><script>secret()</script>`); err != nil {
+		t.Fatalf("set content: %v", err)
+	}
+
+	results, err := db.SearchArticlesWithTerms(AISearchQuery{
+		Original: "AI safety",
+		Required: []string{"AI", "safety"},
+		Optional: []string{"engineering", "testing"},
+		Patterns: []string{"AI%safety"},
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 visible results, got %d: %+v", len(results), results)
+	}
+	if results[0].Article.ID != titleID {
+		t.Fatalf("expected title phrase match first, got article %d", results[0].Article.ID)
+	}
+	seen := map[int64]AISearchResult{}
+	for _, searchResult := range results {
+		seen[searchResult.Article.ID] = searchResult
+		if searchResult.Article.ID == hiddenID {
+			t.Fatal("hidden article must not be returned")
+		}
+		if searchResult.RelevanceScore <= 0 || len(searchResult.MatchedTerms) == 0 || len(searchResult.MatchedFields) == 0 {
+			t.Fatalf("missing relevance explanation: %+v", searchResult)
+		}
+	}
+	if _, ok := seen[summaryID]; !ok {
+		t.Fatal("expected original RSS summary match")
+	}
+	contentResult, ok := seen[contentID]
+	if !ok {
+		t.Fatal("expected article content match")
+	}
+	if strings.Contains(contentResult.Excerpt, "<") || strings.Contains(contentResult.Excerpt, "secret()") {
+		t.Fatalf("excerpt was not sanitized: %q", contentResult.Excerpt)
+	}
+
+	injectionResults, err := db.SearchArticlesWithTerms(AISearchQuery{
+		Original: `' OR 1=1 --`,
+		Required: []string{`%' OR 1=1 --`},
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("parameterized search rejected input unexpectedly: %v", err)
+	}
+	if len(injectionResults) != 0 {
+		t.Fatalf("SQL-like input must not broaden results: %+v", injectionResults)
+	}
+
+	// A broad expansion can match more rows than the bounded candidate set.
+	// The exact original phrase must be prioritized before LIMIT, even when it
+	// is older and inserted after all broad matches.
+	for i := 0; i < 230; i++ {
+		if _, err := db.Exec(`
+			INSERT INTO articles (feed_id, title, url, published_at, original_summary)
+			VALUES (?, ?, ?, ?, ?)
+		`, feedID, fmt.Sprintf("Broad result %03d", i), fmt.Sprintf("https://example.com/broad/%d", i), time.Now(), "common expansion"); err != nil {
+			t.Fatalf("insert broad search candidate %d: %v", i, err)
+		}
+	}
+	exactResult, err := db.Exec(`
+		INSERT INTO articles (feed_id, title, url, published_at, original_summary)
+		VALUES (?, ?, ?, ?, ?)
+	`, feedID, "rare exact phrase", "https://example.com/exact", time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), "common expansion")
+	if err != nil {
+		t.Fatalf("insert exact search candidate: %v", err)
+	}
+	exactID, _ := exactResult.LastInsertId()
+
+	boundedResults, err := db.SearchArticlesWithTerms(AISearchQuery{
+		Original: "rare exact phrase",
+		Required: []string{"common"},
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("bounded candidate search: %v", err)
+	}
+	if len(boundedResults) == 0 || boundedResults[0].Article.ID != exactID {
+		t.Fatalf("expected exact phrase result before bounded broad matches, got %+v", boundedResults)
+	}
+
+	wildcardOnlyResults, err := db.SearchArticlesWithTerms(AISearchQuery{
+		Original: "missing literal phrase",
+		Patterns: []string{"%", " % % "},
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("wildcard-only pattern search: %v", err)
+	}
+	if len(wildcardOnlyResults) != 0 {
+		t.Fatalf("wildcard-only patterns must not broaden results: %+v", wildcardOnlyResults)
 	}
 }

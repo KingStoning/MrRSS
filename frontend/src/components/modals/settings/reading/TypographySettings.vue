@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { PhTextT } from '@phosphor-icons/vue';
+import FontFamilySelect from '@/components/settings/FontFamilySelect.vue';
 import { SettingGroup, SettingItem } from '@/components/settings';
 import {
   READER_FONT_SIZE,
@@ -16,11 +17,6 @@ const props = defineProps<{ settings: SettingsData }>();
 const emit = defineEmits<{ 'update:settings': [settings: SettingsData] }>();
 const { t } = useI18n();
 
-const fontOptions = computed(() => [
-  { value: 'serif', label: t('setting.typography.fontSerif') },
-  { value: 'sans-serif', label: t('setting.typography.fontSansSerif') },
-  { value: 'hyperlegible', label: t('setting.typography.fontHyperlegible') },
-]);
 const fontSize = computed(() =>
   clampReaderSetting(
     props.settings.content_font_size,
@@ -63,22 +59,10 @@ function updateSetting<K extends keyof SettingsData>(key: K, value: SettingsData
   <SettingGroup :icon="PhTextT" :title="t('setting.tab.typography')">
     <SettingItem :title="t('setting.typography.contentFontFamily')">
       <template #description>{{ t('setting.typography.contentFontFamilyDesc') }}</template>
-      <div
-        class="reader-segments"
-        role="group"
-        :aria-label="t('setting.typography.contentFontFamily')"
-      >
-        <button
-          v-for="option in fontOptions"
-          :key="option.value"
-          type="button"
-          :class="{ selected: settings.content_font_family === option.value }"
-          :aria-pressed="settings.content_font_family === option.value"
-          @click="updateSetting('content_font_family', option.value)"
-        >
-          {{ option.label }}
-        </button>
-      </div>
+      <FontFamilySelect
+        :model-value="settings.content_font_family"
+        @update:model-value="updateSetting('content_font_family', String($event))"
+      />
     </SettingItem>
 
     <SettingItem :title="t('setting.typography.contentFontSize')">

@@ -15,6 +15,7 @@ import (
 	"MrRSS/internal/handlers/core"
 	"MrRSS/internal/handlers/response"
 	"MrRSS/internal/models"
+	"MrRSS/internal/utils/httputil"
 )
 
 // ProfileRequest represents the request body for creating/updating an AI profile
@@ -44,6 +45,7 @@ type ProfileTestResult struct {
 	ModelAvailable    bool   `json:"model_available"`
 	ResponseTimeMs    int64  `json:"response_time_ms"`
 	ErrorMessage      string `json:"error_message,omitempty"`
+	ErrorCode         string `json:"error_code,omitempty"`
 }
 
 // HandleListAIProfiles handles GET /api/ai/profiles
@@ -175,6 +177,7 @@ func HandleCreateAIProfile(h *core.Handler, w http.ResponseWriter, r *http.Reque
 	}
 
 	profile.ID = id
+	invalidateTranslationProfile(h)
 	profile.APIKey = "" // Don't return API key in response
 
 	w.WriteHeader(http.StatusCreated)
@@ -262,6 +265,7 @@ func HandleUpdateAIProfile(h *core.Handler, w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	invalidateTranslationProfile(h)
 	profile.APIKey = "" // Don't return API key in response
 	response.JSON(w, profile)
 }
@@ -295,6 +299,7 @@ func HandleDeleteAIProfile(h *core.Handler, w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	invalidateTranslationProfile(h)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -329,7 +334,14 @@ func HandleSetDefaultAIProfile(h *core.Handler, w http.ResponseWriter, r *http.R
 		return
 	}
 
+	invalidateTranslationProfile(h)
 	response.JSON(w, map[string]string{"message": "default profile set"})
+}
+
+func invalidateTranslationProfile(h *core.Handler) {
+	if translator, ok := h.Translator.(interface{ InvalidateCache() }); ok {
+		translator.InvalidateCache()
+	}
 }
 
 // HandleTestAIProfile handles POST /api/ai/profiles/:id/test
@@ -477,7 +489,8 @@ func testAIProfileConnection(h *core.Handler, profile *models.AIProfile) Profile
 	}
 
 	if !result.ConfigValid {
-		result.ErrorMessage = "Configuration incomplete: " + strings.Join(validationErrors, ", ")
+		result.ErrorMessage = ai.UserFacingErrorForCode(ai.ErrorCodeConfigurationInvalid).Message
+		result.ErrorCode = ai.ErrorCodeConfigurationInvalid
 		result.ResponseTimeMs = time.Since(startTime).Milliseconds()
 		return result
 	}
@@ -486,14 +499,16 @@ func testAIProfileConnection(h *core.Handler, profile *models.AIProfile) Profile
 	parsedURL, err := url.Parse(profile.Endpoint)
 	if err != nil {
 		result.ConfigValid = false
-		result.ErrorMessage = "Invalid endpoint URL: " + err.Error()
+		result.ErrorMessage = ai.UserFacingErrorForCode(ai.ErrorCodeConfigurationInvalid).Message
+		result.ErrorCode = ai.ErrorCodeConfigurationInvalid
 		result.ResponseTimeMs = time.Since(startTime).Milliseconds()
 		return result
 	}
 
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
 		result.ConfigValid = false
-		result.ErrorMessage = "API endpoint must use HTTP or HTTPS"
+		result.ErrorMessage = ai.UserFacingErrorForCode(ai.ErrorCodeConfigurationInvalid).Message
+		result.ErrorCode = ai.ErrorCodeConfigurationInvalid
 		result.ResponseTimeMs = time.Since(startTime).Milliseconds()
 		return result
 	}
@@ -501,9 +516,11 @@ func testAIProfileConnection(h *core.Handler, profile *models.AIProfile) Profile
 	// Create HTTP client with proxy support if configured
 	httpClient, err := createHTTPClientWithProxyForProfile(h)
 	if err != nil {
+		publicErr := ai.ClassifyUserFacingError(err)
 		result.ConnectionSuccess = false
 		result.ModelAvailable = false
-		result.ErrorMessage = fmt.Sprintf("Failed to create HTTP client: %v", err)
+		result.ErrorMessage = publicErr.Message
+		result.ErrorCode = publicErr.Code
 		result.ResponseTimeMs = time.Since(startTime).Milliseconds()
 		return result
 	}
@@ -524,9 +541,11 @@ func testAIProfileConnection(h *core.Handler, profile *models.AIProfile) Profile
 	_, err = client.Request("", "test")
 
 	if err != nil {
+		publicErr := ai.ClassifyUserFacingError(err)
 		result.ConnectionSuccess = false
 		result.ModelAvailable = false
-		result.ErrorMessage = fmt.Sprintf("Connection failed: %v", err)
+		result.ErrorMessage = publicErr.Message
+		result.ErrorCode = publicErr.Code
 	} else {
 		result.ConnectionSuccess = true
 		result.ModelAvailable = true
@@ -538,50 +557,5 @@ func testAIProfileConnection(h *core.Handler, profile *models.AIProfile) Profile
 
 // createHTTPClientWithProxyForProfile creates an HTTP client with global proxy settings
 func createHTTPClientWithProxyForProfile(h *core.Handler) (*http.Client, error) {
-	proxyEnabled, _ := h.DB.GetSetting("proxy_enabled")
-	if proxyEnabled != "true" {
-		return &http.Client{}, nil
-	}
-
-	proxyType, _ := h.DB.GetSetting("proxy_type")
-	proxyHost, _ := h.DB.GetSetting("proxy_host")
-	proxyPort, _ := h.DB.GetSetting("proxy_port")
-	proxyUsername, _ := h.DB.GetEncryptedSetting("proxy_username")
-	proxyPassword, _ := h.DB.GetEncryptedSetting("proxy_password")
-
-	proxyURL := buildProxyURLForProfile(proxyType, proxyHost, proxyPort, proxyUsername, proxyPassword)
-	if proxyURL == "" {
-		return &http.Client{}, nil
-	}
-
-	u, err := url.Parse(proxyURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid proxy URL: %w", err)
-	}
-
-	return &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(u),
-		},
-	}, nil
-}
-
-// buildProxyURLForProfile builds a proxy URL from components
-func buildProxyURLForProfile(proxyType, proxyHost, proxyPort, proxyUsername, proxyPassword string) string {
-	if proxyHost == "" || proxyPort == "" {
-		return ""
-	}
-
-	scheme := "http"
-	switch proxyType {
-	case "socks5":
-		scheme = "socks5"
-	case "https":
-		scheme = "http" // HTTPS proxies use HTTP CONNECT
-	}
-
-	if proxyUsername != "" && proxyPassword != "" {
-		return fmt.Sprintf("%s://%s:%s@%s:%s", scheme, proxyUsername, proxyPassword, proxyHost, proxyPort)
-	}
-	return fmt.Sprintf("%s://%s:%s", scheme, proxyHost, proxyPort)
+	return httputil.CreateHTTPClientWithProxySettings(h.DB, 30*time.Second)
 }

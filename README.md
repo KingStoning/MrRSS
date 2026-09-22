@@ -1,4 +1,4 @@
-# MrRSS
+<h1><img src="imgs/logo-rounded.png" alt="MrRSS logo" style="height: 40px;"/>&nbsp;MrRSS</h1>
 
 <a href="https://trendshift.io/repositories/15731" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15731" alt="DevXDojo%2FMrRSS | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
@@ -8,9 +8,9 @@
    <strong>English</strong> | <a href="README_zh.md">简体中文</a>
 </p>
 
-[![Version](https://img.shields.io/badge/version-1.3.26-blue.svg)](https://github.com/DevXDojo/MrRSS/releases)
+[![Version](https://img.shields.io/badge/version-1.3.37-blue.svg)](https://github.com/DevXDojo/MrRSS/releases)
 [![License](https://img.shields.io/badge/license-GPLv3-green.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go)](https://go.dev/)
 [![Wails](https://img.shields.io/badge/Wails-v3%20alpha-red)](https://wails.io/)
 [![Vue.js](https://img.shields.io/badge/Vue.js-3.5+-4FC08D?logo=vue.js)](https://vuejs.org/)
 
@@ -68,7 +68,7 @@ Download the latest installer for your platform from the [Releases](https://gith
 
 Before you begin, ensure you have the following installed:
 
-- [Go](https://go.dev/) (1.25 or higher)
+- [Go](https://go.dev/) (1.27 or higher)
 - [Node.js](https://nodejs.org/) (20 LTS or higher with npm)
 - [Wails v3](https://v3alpha.wails.io/getting-started/installation/) CLI
 
@@ -105,7 +105,7 @@ sudo apt-get install libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev gcc pkg-c
 3. **Install Wails v3 CLI**
 
    ```bash
-   go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.117
+   go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.20
    ```
 
 4. **Build the application**
@@ -215,7 +215,10 @@ pre-commit run --all-files
 make test
 ```
 
-### Server Mode (API-only)
+### Local API and Server Mode
+
+The desktop app exposes its REST API at `http://localhost:1234/api` while it is
+running. The listener is restricted to the local computer.
 
 For server deployments and API integration, use the headless server version:
 
@@ -234,6 +237,8 @@ Pre-built server images based on ghcr.io are also available:
 docker run -d -p 1234:1234 ghcr.io/devxdojo/mrrss:latest-amd64
 docker run -d -p 1234:1234 ghcr.io/devxdojo/mrrss:latest-arm64
 ```
+
+For browser access and local setup, see [Browser interface](docs/SERVER_MODE/README.md).
 
 Please refer to the [Server Mode API Documentation](docs/SERVER_MODE/swagger.json) for a complete API reference.
 To let Codex operate MrRSS through this API, install the release skill package described in [MrRSS Skills](docs/SKILLS.md).
@@ -277,8 +282,6 @@ This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) 
 - **Issues**: [GitHub Issues](https://github.com/DevXDojo/MrRSS/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/DevXDojo/MrRSS/discussions)
 - **Repository**: [github.com/DevXDojo/MrRSS](https://github.com/DevXDojo/MrRSS)
-
----
 
 <div align="center">
   <img src="imgs/sponsor.png" alt="Sponsor MrRSS"/>

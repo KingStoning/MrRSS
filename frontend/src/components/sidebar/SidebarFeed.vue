@@ -6,11 +6,16 @@ import {
   PhImage,
   PhDotsSixVertical,
   PhLock,
+  PhPushPin,
 } from '@phosphor-icons/vue';
 import type { Feed } from '@/types/models';
+import { useSidebarSort } from '@/composables/ui/useSidebarSort';
 import { useI18n } from 'vue-i18n';
+import { useSettings } from '@/composables/core/useSettings';
 
 const { t } = useI18n();
+const { isPinned: isItemPinned } = useSidebarSort();
+const { settings } = useSettings();
 
 interface Props {
   feed: Feed;
@@ -54,19 +59,10 @@ const iconSource = computed(() => iconCandidates.value[iconCandidateIndex.value]
 
 watch(iconCandidates, () => (iconCandidateIndex.value = 0));
 
-const fallbackLabel = computed(
-  () => props.feed.title.trim().charAt(0).toLocaleUpperCase() || 'R'
-);
+const fallbackLabel = computed(() => props.feed.title.trim().charAt(0).toLocaleUpperCase() || 'R');
 
 const fallbackIconStyle = computed(() => {
-  const palette = [
-    '#c65f3d',
-    '#d04747',
-    '#3f62bf',
-    '#129485',
-    '#7555c7',
-    '#2f8748',
-  ];
+  const palette = ['#c65f3d', '#d04747', '#3f62bf', '#129485', '#7555c7', '#2f8748'];
 
   const hash = Array.from(props.feed.title).reduce(
     (sum, character) => sum + character.codePointAt(0)!,
@@ -94,11 +90,7 @@ function getFriendlyErrorMessage(error: string): string {
     return t('modal.feed.errorDNS');
   }
 
-  if (
-    error.includes('certificate') ||
-    error.includes('SSL') ||
-    error.includes('TLS')
-  ) {
+  if (error.includes('certificate') || error.includes('SSL') || error.includes('TLS')) {
     return t('modal.feed.errorCertificate');
   }
 
@@ -111,20 +103,12 @@ function getFriendlyErrorMessage(error: string): string {
     return t('modal.feed.errorUnauthorized');
   }
 
-  if (
-    error.includes('500') ||
-    error.includes('502') ||
-    error.includes('503')
-  ) {
+  if (error.includes('500') || error.includes('502') || error.includes('503')) {
     return t('modal.feed.errorServer');
   }
 
   // Feed format errors
-  if (
-    error.includes('XML') ||
-    error.includes('parse') ||
-    error.includes('invalid')
-  ) {
+  if (error.includes('XML') || error.includes('parse') || error.includes('invalid')) {
     return t('modal.feed.errorInvalidFormat');
   }
 
@@ -168,16 +152,14 @@ function handleDragEnd() {
 
 <template>
   <div
-    :class="[
-      'feed-item',
-      isActive ? 'active' : '',
-      props.compactMode ? 'compact' : '',
-    ]"
+    :class="['feed-item', isActive ? 'active' : '', props.compactMode ? 'compact' : '']"
     :data-feed-id="feed.id"
     :data-level="level || 0"
+    :data-pinned="isItemPinned(`feed:${feed.id}`)"
     @click="emit('click')"
     @contextmenu="(e) => emit('contextmenu', e)"
   >
+    <PhPushPin v-if="isItemPinned(`feed:${feed.id}`)" :size="12" class="shrink-0 text-accent" />
     <!-- Drag handle (only visible in edit mode and not for FreshRSS feeds) -->
     <div
       v-if="isEditMode && !feed.is_freshrss_source"
@@ -213,12 +195,7 @@ function handleDragEnd() {
         @error="handleIconError"
       />
 
-      <span
-        v-else
-        class="feed-avatar-fallback"
-        :style="fallbackIconStyle"
-        aria-hidden="true"
-      >
+      <span v-else class="feed-avatar-fallback" :style="fallbackIconStyle" aria-hidden="true">
         {{ fallbackLabel }}
       </span>
     </div>
@@ -257,10 +234,7 @@ function handleDragEnd() {
       @mouseenter="showErrorTooltip = true"
       @mouseleave="showErrorTooltip = false"
     >
-      <PhWarningCircle
-        :size="16"
-        class="text-yellow-500 shrink-0"
-      />
+      <PhWarningCircle :size="16" class="text-yellow-500 shrink-0" />
 
       <!-- Error tooltip -->
       <Transition
@@ -277,21 +251,14 @@ function handleDragEnd() {
         >
           <div class="px-2.5 py-2">
             <div class="flex items-start gap-2">
-              <PhWarningCircle
-                :size="14"
-                class="text-yellow-500 shrink-0 mt-0.5"
-              />
+              <PhWarningCircle :size="14" class="text-yellow-500 shrink-0 mt-0.5" />
 
               <div class="flex-1 min-w-0">
-                <div
-                  class="text-xs font-semibold text-text-primary mb-1"
-                >
+                <div class="text-xs font-semibold text-text-primary mb-1">
                   {{ t('setting.update.updateFailed') }}
                 </div>
 
-                <div
-                  class="text-xs text-text-secondary break-words leading-relaxed"
-                >
+                <div class="text-xs text-text-secondary break-words leading-relaxed">
                   {{ getFriendlyErrorMessage(feed.last_error) }}
                 </div>
               </div>
@@ -301,24 +268,25 @@ function handleDragEnd() {
       </Transition>
     </div>
 
-    <span
-      v-if="unreadCount > 0"
-      class="unread-badge"
-    >
+    <span v-if="settings.show_unread_counts && unreadCount > 0" class="unread-badge">
       {{ unreadCount }}
     </span>
   </div>
 </template>
 
 <style scoped>
+.feed-item {
+  font-family: var(--ui-font-family);
+}
+
 @reference "../../style.css";
 
 .feed-item {
   @apply cursor-pointer rounded-md text-text-primary flex items-center hover:bg-bg-tertiary transition-colors;
-  min-height: 30px;
+  min-height: 36px;
   padding: 4px 8px;
-  gap: 7px;
-  font-size: 13px;
+  gap: 10px;
+  font-size: 14px;
   line-height: 1.25;
 }
 
@@ -404,8 +372,8 @@ function handleDragEnd() {
 }
 
 .feed-avatar {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   overflow: hidden;
   border-radius: 5px;
 }
@@ -452,10 +420,7 @@ function handleDragEnd() {
 }
 
 .drag-handle:hover {
-  background-color: var(
-    --color-bg-tertiary,
-    rgba(0, 0, 0, 0.05)
-  );
+  background-color: var(--color-bg-tertiary, rgba(0, 0, 0, 0.05));
 }
 
 .drag-handle:active {
@@ -471,8 +436,8 @@ function handleDragEnd() {
 
 .unread-badge {
   @apply text-[9px] sm:text-[10px] font-medium rounded-full min-w-[14px] sm:min-w-[16px] h-[14px] sm:h-[16px] px-0.5 sm:px-1 flex items-center justify-center;
-  background-color: rgba(120, 120, 120, 0.15);
-  color: #666666;
+  background-color: transparent;
+  color: var(--text-secondary);
 }
 </style>
 
@@ -480,7 +445,7 @@ function handleDragEnd() {
 @reference "../../style.css";
 
 .dark-mode .unread-badge {
-  background-color: rgba(100, 100, 100, 0.4) !important;
+  background-color: transparent !important;
   color: #d0d0d0 !important;
 }
 </style>

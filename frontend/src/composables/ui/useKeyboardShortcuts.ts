@@ -1,33 +1,8 @@
-import { ref, onMounted, onBeforeUnmount } from 'vue';
+import { onMounted, onBeforeUnmount } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { shortcuts, shortcutsEnabled } from './shortcutBindings';
 import { useAppStore } from '@/stores/app';
 import { openInBrowser } from '@/utils/browser';
-
-interface KeyboardShortcuts {
-  nextArticle: string;
-  previousArticle: string;
-  nextArticleArrow: string;
-  previousArticleArrow: string;
-  openArticle: string;
-  closeArticle: string;
-  toggleReadStatus: string;
-  toggleFavoriteStatus: string;
-  toggleReadLaterStatus: string;
-  openInBrowser: string;
-  toggleContentView: string;
-  refreshFeeds: string;
-  markAllRead: string;
-  openSettings: string;
-  addFeed: string;
-  focusSearch: string;
-  toggleFilter: string;
-  toggleUnreadFilter: string;
-  toggleFavoritesFilter: string;
-  toggleReadLaterFilter: string;
-  goToAllArticles: string;
-  goToUnread: string;
-  goToFavorites: string;
-  goToReadLater: string;
-}
 
 interface KeyboardShortcutCallbacks {
   onOpenSettings: () => void;
@@ -37,34 +12,8 @@ interface KeyboardShortcutCallbacks {
 
 export function useKeyboardShortcuts(callbacks: KeyboardShortcutCallbacks) {
   const store = useAppStore();
-
-  const shortcutsEnabled = ref(true);
-  const shortcuts = ref<KeyboardShortcuts>({
-    nextArticle: 'j',
-    previousArticle: 'k',
-    nextArticleArrow: 'ArrowRight',
-    previousArticleArrow: 'ArrowLeft',
-    openArticle: 'Enter',
-    closeArticle: 'Escape',
-    toggleReadStatus: 'r',
-    toggleFavoriteStatus: 's',
-    toggleReadLaterStatus: 'l',
-    openInBrowser: 'o',
-    toggleContentView: 'v',
-    refreshFeeds: 'Shift+r',
-    markAllRead: 'Shift+a',
-    openSettings: ',',
-    addFeed: 'a',
-    focusSearch: '/',
-    toggleFilter: 'f',
-    toggleUnreadFilter: 'Alt+r',
-    toggleFavoritesFilter: 'Alt+s',
-    toggleReadLaterFilter: 'Alt+l',
-    goToAllArticles: '1',
-    goToUnread: '2',
-    goToFavorites: '3',
-    goToReadLater: '4',
-  });
+  const { t } = useI18n();
+  const pendingReadLater = new Set<number>();
 
   // Helper functions
   function buildKeyCombo(e: KeyboardEvent): string {
@@ -83,7 +32,7 @@ export function useKeyboardShortcuts(callbacks: KeyboardShortcutCallbacks) {
   }
 
   function navigateArticle(direction: number): void {
-    const articles = store.articles;
+    const articles = store.navigableArticles;
     if (!articles || articles.length === 0) return;
 
     const currentIndex = store.currentArticleId
@@ -103,7 +52,7 @@ export function useKeyboardShortcuts(callbacks: KeyboardShortcutCallbacks) {
   }
 
   function selectArticleByIndex(index: number): void {
-    const article = store.articles[index];
+    const article = store.navigableArticles[index];
     if (!article) return;
 
     store.currentArticleId = article.id;
@@ -126,7 +75,7 @@ export function useKeyboardShortcuts(callbacks: KeyboardShortcutCallbacks) {
   }
 
   function toggleCurrentArticleRead(): void {
-    const article = store.articles.find((a) => a.id === store.currentArticleId);
+    const article = store.navigableArticles.find((a) => a.id === store.currentArticleId);
     if (!article) return;
 
     const newState = !article.is_read;
@@ -140,7 +89,7 @@ export function useKeyboardShortcuts(callbacks: KeyboardShortcutCallbacks) {
   }
 
   function toggleCurrentArticleFavorite(): void {
-    const article = store.articles.find((a) => a.id === store.currentArticleId);
+    const article = store.navigableArticles.find((a) => a.id === store.currentArticleId);
     if (!article) return;
 
     const newState = !article.is_favorite;
@@ -151,26 +100,30 @@ export function useKeyboardShortcuts(callbacks: KeyboardShortcutCallbacks) {
     });
   }
 
-  function toggleCurrentArticleReadLater(): void {
-    const article = store.articles.find((a) => a.id === store.currentArticleId);
-    if (!article) return;
+  async function toggleCurrentArticleReadLater(): Promise<void> {
+    const article = store.navigableArticles.find((a) => a.id === store.currentArticleId);
+    if (!article || pendingReadLater.has(article.id)) return;
 
     const newState = !article.is_read_later;
     article.is_read_later = newState;
-    // When adding to read later, also mark as unread
-    if (newState) {
-      article.is_read = false;
-    }
-    fetch(`/api/articles/toggle-read-later?id=${article.id}`, { method: 'POST' })
-      .then(() => store.fetchUnreadCounts())
-      .catch((e) => {
-        console.error('Error toggling read later:', e);
-        article.is_read_later = !newState;
+    pendingReadLater.add(article.id);
+    try {
+      const response = await fetch(`/api/articles/toggle-read-later?id=${article.id}`, {
+        method: 'POST',
       });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await store.fetchFilterCounts();
+    } catch (e) {
+      console.error('Error toggling read later:', e);
+      article.is_read_later = !newState;
+      window.showToast(t('common.errors.savingSettings'), 'error');
+    } finally {
+      pendingReadLater.delete(article.id);
+    }
   }
 
   function openCurrentArticleInBrowser(): void {
-    const article = store.articles.find((a) => a.id === store.currentArticleId);
+    const article = store.navigableArticles.find((a) => a.id === store.currentArticleId);
     if (article && article.url) {
       openInBrowser(article.url);
     }
@@ -372,7 +325,7 @@ export function useKeyboardShortcuts(callbacks: KeyboardShortcutCallbacks) {
         navigateArticle(-1);
         break;
       case 'openArticle':
-        if (store.articles.length > 0 && !store.currentArticleId) {
+        if (store.navigableArticles.length > 0 && !store.currentArticleId) {
           selectArticleByIndex(0);
         }
         break;
@@ -472,5 +425,6 @@ export function useKeyboardShortcuts(callbacks: KeyboardShortcutCallbacks) {
 
   return {
     shortcuts,
+    shortcutsEnabled,
   };
 }
