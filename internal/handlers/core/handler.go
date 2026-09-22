@@ -47,6 +47,8 @@ type DiscoveryState struct {
 // Handler holds all dependencies for HTTP handlers.
 // It now uses a service registry for better separation of concerns.
 type Handler struct {
+	MediaClient httputil.ReusableClient
+
 	// Services registry provides access to all business logic services
 	Services *svc.Registry
 

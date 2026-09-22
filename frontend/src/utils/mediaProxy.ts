@@ -5,6 +5,7 @@
 // Cache for media cache enabled setting to avoid repeated API calls
 let mediaCacheEnabledCache: boolean | null = null;
 let mediaCachePromise: Promise<boolean> | null = null;
+let mediaProxyFallbackCache = false;
 
 /**
  * Convert a media URL to use the proxy endpoint
@@ -15,6 +16,13 @@ let mediaCachePromise: Promise<boolean> | null = null;
  */
 export function getProxiedMediaUrl(url: string, referer?: string, forceCache?: boolean): string {
   if (!url) return '';
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.origin === window.location.origin && parsed.pathname === '/api/media/proxy')
+      return url;
+  } catch {
+    return url;
+  }
 
   // Don't proxy data URLs or blob URLs
   if (url.startsWith('data:') || url.startsWith('blob:')) {
@@ -44,14 +52,22 @@ export function getProxiedMediaUrl(url: string, referer?: string, forceCache?: b
   // CRITICAL FIX: Use base64 encoding to avoid all URL encoding issues
   // This prevents double-encoding problems with special characters, Chinese characters, etc.
   // Base64 encoding is safe for URLs and doesn't interfere with query parameter parsing
-  const urlB64 = btoa(urlToProxy);
+  const urlB64 = encodeURIComponent(
+    btoa(
+      Array.from(new TextEncoder().encode(urlToProxy), (byte) => String.fromCharCode(byte)).join('')
+    )
+  );
 
   // Build proxy URL with base64-encoded parameters
   let proxyUrl = `/api/media/proxy?url_b64=${urlB64}`;
 
   // Add referer if provided (also base64-encoded)
   if (referer) {
-    const refererB64 = btoa(referer);
+    const refererB64 = encodeURIComponent(
+      btoa(
+        Array.from(new TextEncoder().encode(referer), (byte) => String.fromCharCode(byte)).join('')
+      )
+    );
     proxyUrl += `&referer_b64=${refererB64}`;
   }
 
@@ -84,6 +100,8 @@ export async function isMediaCacheEnabled(): Promise<boolean> {
       const response = await fetch('/api/settings');
       if (response.ok) {
         const settings = await response.json();
+        mediaProxyFallbackCache =
+          settings.media_proxy_fallback === true || settings.media_proxy_fallback === 'true';
         mediaCacheEnabledCache =
           settings.media_cache_enabled === 'true' || settings.media_cache_enabled === true;
         return mediaCacheEnabledCache;
@@ -105,6 +123,7 @@ export async function isMediaCacheEnabled(): Promise<boolean> {
  */
 export function clearMediaCacheEnabledCache(): void {
   mediaCacheEnabledCache = null;
+  mediaProxyFallbackCache = false;
 }
 
 /**
@@ -227,4 +246,9 @@ function decodeHTMLEntities(text: string): string {
   const textarea = document.createElement('textarea');
   textarea.innerHTML = text;
   return textarea.value;
+}
+
+export async function isMediaProxyFallbackEnabled(): Promise<boolean> {
+  await isMediaCacheEnabled();
+  return mediaCacheEnabledCache === true || mediaProxyFallbackCache;
 }

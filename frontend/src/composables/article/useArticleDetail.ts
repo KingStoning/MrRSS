@@ -8,8 +8,14 @@ import {
   queryArticleContentImages,
   queryArticleContentLinks,
 } from '@/utils/articleContentDom';
-import { proxyImagesInHtml, isMediaCacheEnabled } from '@/utils/mediaProxy';
+import {
+  proxyImagesInHtml,
+  isMediaCacheEnabled,
+  clearMediaCacheEnabledCache,
+} from '@/utils/mediaProxy';
 import { loadArticleContent, invalidateArticleContent } from '@/utils/articleContentCache';
+
+import { createArticleImageRecovery } from '@/utils/articleImageRecovery';
 
 type ViewMode = 'original' | 'rendered' | 'external';
 type RenderAction = 'showContent' | 'showOriginal' | null;
@@ -28,6 +34,12 @@ interface RenderActionEvent extends Event {
 
 export function useArticleDetail() {
   const store = useAppStore();
+  const imageRecovery = createArticleImageRecovery();
+  const boundImages = new WeakSet<HTMLImageElement>();
+  watch(
+    () => store.currentArticleId,
+    () => imageRecovery.clear()
+  );
   const { t, locale } = useI18n();
 
   const navigationArticles = computed(() => store.navigableArticles);
@@ -445,6 +457,8 @@ export function useArticleDetail() {
             return;
           }
 
+          imageRecovery.attach(img, article.value?.url);
+          if (boundImages.has(img)) return;
           // Skip images that are very small (likely icons/emojis)
           const isSmallIcon = img.height <= 24 && img.height > 0;
           if (isSmallIcon) {
@@ -455,11 +469,11 @@ export function useArticleDetail() {
           img.style.cursor = 'pointer';
           img.style.pointerEvents = 'auto';
 
-          // Remove old listeners by replacing with clone
-          const newImg = img.cloneNode(true) as HTMLImageElement;
-          img.parentNode.replaceChild(newImg, img);
+          // Preserve in-flight and decoded images across repeated rendering passes.
+          boundImages.add(img);
+          const newImg = img;
 
-          // Ensure cloned image maintains pointer interaction styles
+          // Ensure the image maintains pointer interaction styles
           newImg.style.cursor = 'pointer';
           newImg.style.pointerEvents = 'auto';
 
@@ -916,6 +930,7 @@ export function useArticleDetail() {
       }
     }
 
+    window.addEventListener('settings-updated', clearMediaCacheEnabledCache);
     window.addEventListener('render-article-content', handleRenderContent);
     window.addEventListener('explicit-render-action', handleExplicitRenderAction);
     window.addEventListener('toggle-content-view', handleToggleContentView);
@@ -931,8 +946,10 @@ export function useArticleDetail() {
   });
 
   onBeforeUnmount(() => {
+    imageRecovery.clear();
     contentRequestId += 1;
     contentController?.abort();
+    window.removeEventListener('settings-updated', clearMediaCacheEnabledCache);
     window.removeEventListener('render-article-content', handleRenderContent);
     window.removeEventListener('explicit-render-action', handleExplicitRenderAction);
     window.removeEventListener('toggle-content-view', handleToggleContentView);
