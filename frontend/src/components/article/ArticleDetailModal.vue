@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { withShortcut } from '@/composables/ui/shortcutBindings';
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAppStore } from '@/stores/app';
@@ -10,6 +11,7 @@ import FindInPage from '../common/FindInPage.vue';
 import type { Article } from '@/types/models';
 import { openInBrowser } from '@/utils/browser';
 import { useSettings } from '@/composables/core/useSettings';
+import { queryArticleContentImages } from '@/utils/articleContentDom';
 
 interface Props {
   article: Article;
@@ -151,18 +153,26 @@ async function exportToZotero() {
 }
 
 // Navigation
+const navigationArticles = computed(() => store.navigableArticles);
 const currentArticleIndex = computed(() => {
   if (!props.article) return -1;
-  return store.articles.findIndex((a) => a.id === props.article.id);
+  return navigationArticles.value.findIndex((a) => a.id === props.article.id);
 });
 
 const hasPreviousArticle = computed(() => currentArticleIndex.value > 0);
 const hasNextArticle = computed(
-  () => currentArticleIndex.value >= 0 && currentArticleIndex.value < store.articles.length - 1
+  () =>
+    currentArticleIndex.value >= 0 &&
+    currentArticleIndex.value < navigationArticles.value.length - 1
 );
 
 // Load default view mode on mount
+function onArticleFeedSelected() {
+  emit('close');
+}
+
 onMounted(async () => {
+  window.addEventListener('article-feed-selected', onArticleFeedSelected);
   try {
     await fetchSettings();
     // Apply default view mode
@@ -176,6 +186,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('article-feed-selected', onArticleFeedSelected);
   window.removeEventListener('keydown', handleKeydown);
 });
 
@@ -256,7 +267,7 @@ function attachImageEventListeners() {
     const contentEl = document.querySelector('.modal-prose-content');
     if (!contentEl) return;
 
-    const images = contentEl.querySelectorAll('img');
+    const images = queryArticleContentImages(contentEl);
     const allImages: string[] = [];
 
     images.forEach((img) => {
@@ -351,7 +362,12 @@ function handleOverlayClick(e: MouseEvent) {
           <button
             v-if="hasPreviousArticle"
             class="nav-btn"
-            :title="t('article.navigation.previousArticle')"
+            :title="
+              withShortcut(t('article.navigation.previousArticle'), [
+                'previousArticle',
+                'previousArticleArrow',
+              ])
+            "
             @click="emit('previous')"
           >
             <PhCaretLeft :size="16" />
@@ -362,7 +378,9 @@ function handleOverlayClick(e: MouseEvent) {
           <button
             v-if="hasNextArticle"
             class="nav-btn"
-            :title="t('article.navigation.nextArticle')"
+            :title="
+              withShortcut(t('article.navigation.nextArticle'), ['nextArticle', 'nextArticleArrow'])
+            "
             @click="emit('next')"
           >
             <span>{{ t('article.navigation.nextArticle') }}</span>

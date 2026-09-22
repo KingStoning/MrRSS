@@ -2,7 +2,11 @@ package database_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"log"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +54,10 @@ func TestCleanupBySizePreservesUnreadMetadataAndDeletesContentFirst(t *testing.T
 
 	if err := db.SetArticleContent(articleID, strings.Repeat("content ", 200000)); err != nil {
 		t.Fatalf("SetArticleContent error: %v", err)
+	}
+
+	if _, err := db.Exec("UPDATE article_contents SET fetched_at = datetime('now','-10 days') WHERE article_id = ?", articleID); err != nil {
+		t.Fatal(err)
 	}
 
 	deleted, err := db.CleanupBySize()
@@ -172,7 +180,7 @@ func TestCleanupReadArticlesOverPerFeedLimitKeepsFeedsIndependent(t *testing.T) 
 	}
 }
 
-func TestGetArticlesWithUnreadFilterCombinesWithFavorites(t *testing.T) {
+func TestGetArticlesWithUnreadFilterKeepsReadAndUnreadFavorites(t *testing.T) {
 	db := setupDBWithFeed(t)
 
 	var feedID int64
@@ -209,11 +217,13 @@ func TestGetArticlesWithUnreadFilterCombinesWithFavorites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetArticlesWithUnreadFilter error: %v", err)
 	}
-	if len(articles) != 1 {
-		t.Fatalf("expected 1 unread favorite, got %d", len(articles))
+	if len(articles) != 2 {
+		t.Fatalf("expected both read and unread favorites, got %d", len(articles))
 	}
-	if articles[0].Title != "Unread favorite" || articles[0].IsRead || !articles[0].IsFavorite {
-		t.Fatalf("unexpected article returned: %+v", articles[0])
+	for _, article := range articles {
+		if !article.IsFavorite {
+			t.Fatalf("non-favorite returned: %+v", article)
+		}
 	}
 }
 
@@ -418,6 +428,122 @@ func TestSaveArticlesBatchContextCancel(t *testing.T) {
 	}
 }
 
+func TestSaveArticlesRollsBackEntireBatchOnPermanentError(t *testing.T) {
+	db := setupDBWithFeed(t)
+
+	var feedID int64
+	if err := db.QueryRow(`SELECT id FROM feeds WHERE url = ?`, "https://example.com/feed").Scan(&feedID); err != nil {
+		t.Fatalf("scan feed id: %v", err)
+	}
+
+	articles := []*models.Article{
+		{
+			FeedID:                feedID,
+			Title:                 "valid article must be rolled back",
+			URL:                   "https://example.com/atomic-valid",
+			PublishedAt:           time.Now().UTC(),
+			HasValidPublishedTime: true,
+		},
+		{
+			FeedID:                feedID + 10000,
+			Title:                 "invalid feed",
+			URL:                   "https://example.com/atomic-invalid",
+			PublishedAt:           time.Now().UTC(),
+			HasValidPublishedTime: true,
+		},
+	}
+
+	err := db.SaveArticles(context.Background(), articles)
+	if err == nil {
+		t.Fatal("expected the invalid foreign key to fail the batch")
+	}
+	if !strings.Contains(err.Error(), "article 2/2") || !strings.Contains(err.Error(), "attempt(s)") {
+		t.Fatalf("expected batch and attempt context, got %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM articles WHERE url IN (?, ?)`, articles[0].URL, articles[1].URL).Scan(&count); err != nil {
+		t.Fatalf("count batch articles: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("batch committed partially: got %d stored articles, want 0", count)
+	}
+}
+
+func TestSaveArticlesRetriesSQLiteWriteContention(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "write-contention.db")
+	db, err := dbpkg.NewDB(databasePath)
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if _, err := db.Exec(`PRAGMA busy_timeout = 1`); err != nil {
+		t.Fatalf("set short busy timeout: %v", err)
+	}
+	result, err := db.Exec(`INSERT INTO feeds (title, url, category) VALUES (?, ?, ?)`, "Locked Feed", "https://example.com/locked-feed", "news")
+	if err != nil {
+		t.Fatalf("insert feed: %v", err)
+	}
+	feedID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("feed id: %v", err)
+	}
+
+	locker, err := dbpkg.NewDB(databasePath)
+	if err != nil {
+		t.Fatalf("NewDB locker: %v", err)
+	}
+	t.Cleanup(func() { _ = locker.Close() })
+	lockTx, err := locker.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("begin lock transaction: %v", err)
+	}
+	if _, err := lockTx.Exec(`UPDATE settings SET value = value WHERE key = 'theme'`); err != nil {
+		t.Fatalf("acquire write lock: %v", err)
+	}
+
+	previousLogWriter := log.Writer()
+	var retryLog strings.Builder
+	log.SetOutput(&retryLog)
+	t.Cleanup(func() { log.SetOutput(previousLogWriter) })
+
+	releaseDone := make(chan error, 1)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		releaseDone <- lockTx.Rollback()
+	}()
+
+	article := &models.Article{
+		FeedID:                feedID,
+		Title:                 "saved after lock retry",
+		URL:                   "https://example.com/saved-after-lock-retry",
+		PublishedAt:           time.Now().UTC(),
+		HasValidPublishedTime: true,
+	}
+	if err := db.SaveArticles(context.Background(), []*models.Article{article}); err != nil {
+		t.Fatalf("SaveArticles after temporary lock: %v", err)
+	}
+	if err := <-releaseDone; err != nil && !errors.Is(err, sql.ErrTxDone) {
+		t.Fatalf("release lock: %v", err)
+	}
+	if !strings.Contains(retryLog.String(), "retrying") {
+		t.Fatalf("expected a contention retry, logs: %s", retryLog.String())
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM articles WHERE url = ?`, article.URL).Scan(&count); err != nil {
+		t.Fatalf("count retried article: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("retried article count = %d, want 1", count)
+	}
+}
+
 func TestSaveArticlesUpdatePreservesRelatedData(t *testing.T) {
 	db := setupDBWithFeed(t)
 
@@ -484,6 +610,39 @@ func TestSaveArticlesUpdatePreservesRelatedData(t *testing.T) {
 	}
 	if session == nil || session.MessageCount != 1 {
 		t.Fatalf("chat data was not preserved: session=%+v", session)
+	}
+
+	newerSessionID, err := db.CreateChatSession(articleID, "New conversation")
+	if err != nil {
+		t.Fatalf("CreateChatSession(newer) error: %v", err)
+	}
+	if _, err := db.Exec(
+		`UPDATE chat_sessions SET updated_at = '2026-08-25 10:00:00' WHERE id IN (?, ?)`,
+		sessionID, newerSessionID,
+	); err != nil {
+		t.Fatalf("align chat session timestamps: %v", err)
+	}
+	firstMessageID, err := db.CreateChatMessage(newerSessionID, "user", "First in the same second", "")
+	if err != nil {
+		t.Fatalf("CreateChatMessage(first) error: %v", err)
+	}
+	secondMessageID, err := db.CreateChatMessage(newerSessionID, "assistant", "Second in the same second", "thinking")
+	if err != nil {
+		t.Fatalf("CreateChatMessage(second) error: %v", err)
+	}
+	if _, err := db.Exec(
+		`UPDATE chat_sessions SET updated_at = '2026-08-25 10:00:00' WHERE id IN (?, ?)`,
+		sessionID, newerSessionID,
+	); err != nil {
+		t.Fatalf("restore aligned chat session timestamps: %v", err)
+	}
+	sessions, err := db.GetChatSessionsByArticle(articleID)
+	if err != nil || len(sessions) != 2 || sessions[0].ID != newerSessionID {
+		t.Fatalf("chat session order = %+v, err=%v", sessions, err)
+	}
+	messages, err := db.GetChatMessages(newerSessionID)
+	if err != nil || len(messages) != 2 || messages[0].ID != firstMessageID || messages[1].ID != secondMessageID {
+		t.Fatalf("chat message order = %+v, err=%v", messages, err)
 	}
 }
 
@@ -727,5 +886,76 @@ func TestSaveArticlesValidPubDateStillUpdatesTime(t *testing.T) {
 	stored := articles[0].PublishedAt
 	if diff := stored.Sub(t2); diff < 0 || diff > time.Minute {
 		t.Fatalf("valid pubDate not honored on refresh: got %v, want %v (diff %v)", stored, t2, diff)
+	}
+}
+
+func TestFirstChatQuestionNamesOnlyEmptyDefaultSessions(t *testing.T) {
+	db := setupDBWithFeed(t)
+	var feedID int64
+	if err := db.QueryRow(`SELECT id FROM feeds LIMIT 1`).Scan(&feedID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.Exec(`INSERT INTO articles(feed_id,title,url) VALUES(?, 'chat', 'https://example.com/chat-title')`, feedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	articleID, _ := result.LastInsertId()
+	for _, original := range []string{"New Chat", "新对话", "My own title"} {
+		t.Run(original, func(t *testing.T) {
+			id, err := db.CreateChatSession(articleID, original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			question := strings.Repeat("问😀", 40)
+			if _, err := db.CreateChatMessage(id, "user", "  "+question+"  ", ""); err != nil {
+				t.Fatal(err)
+			}
+			session, err := db.GetChatSession(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := string([]rune(question)[:60])
+			if original == "My own title" {
+				want = original
+			}
+			if session.Title != want {
+				t.Fatalf("title=%q want=%q", session.Title, want)
+			}
+			if _, err := db.CreateChatMessage(id, "user", "second question", ""); err != nil {
+				t.Fatal(err)
+			}
+			session, _ = db.GetChatSession(id)
+			if session.Title != want {
+				t.Fatal("later question replaced title")
+			}
+		})
+	}
+	populatedID, err := db.CreateChatSession(articleID, "New Chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CreateChatMessage(populatedID, "assistant", "existing answer", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CreateChatMessage(populatedID, "user", "later question", ""); err != nil {
+		t.Fatal(err)
+	}
+	populated, err := db.GetChatSession(populatedID)
+	if err != nil || populated.Title != "New Chat" {
+		t.Fatalf("populated default session was renamed: %+v %v", populated, err)
+	}
+	id, err := db.CreateChatSession(articleID, "New Chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER reject_chat_message BEFORE INSERT ON chat_messages BEGIN SELECT RAISE(ABORT, 'test failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CreateChatMessage(id, "user", "must roll back title", ""); err == nil {
+		t.Fatal("expected insert failure")
+	}
+	session, err := db.GetChatSession(id)
+	if err != nil || session.Title != "New Chat" || session.MessageCount != 0 {
+		t.Fatalf("transaction did not roll back: %+v %v", session, err)
 	}
 }

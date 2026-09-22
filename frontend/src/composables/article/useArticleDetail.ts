@@ -3,7 +3,13 @@ import { useAppStore } from '@/stores/app';
 import { useI18n } from 'vue-i18n';
 import { openInBrowser } from '@/utils/browser';
 import type { Article } from '@/types/models';
+import {
+  hasArticleContent,
+  queryArticleContentImages,
+  queryArticleContentLinks,
+} from '@/utils/articleContentDom';
 import { proxyImagesInHtml, isMediaCacheEnabled } from '@/utils/mediaProxy';
+import { loadArticleContent, invalidateArticleContent } from '@/utils/articleContentCache';
 
 type ViewMode = 'original' | 'rendered' | 'external';
 type RenderAction = 'showContent' | 'showOriginal' | null;
@@ -24,14 +30,16 @@ export function useArticleDetail() {
   const store = useAppStore();
   const { t, locale } = useI18n();
 
+  const navigationArticles = computed(() => store.navigableArticles);
+
   const article = computed<Article | undefined>(() =>
-    store.articles.find((a) => a.id === store.currentArticleId)
+    navigationArticles.value.find((a) => a.id === store.currentArticleId)
   );
 
   // Get current article index in the filtered list
   const currentArticleIndex = computed(() => {
     if (!store.currentArticleId) return -1;
-    return store.articles.findIndex((a) => a.id === store.currentArticleId);
+    return navigationArticles.value.findIndex((a) => a.id === store.currentArticleId);
   });
 
   // Check if there's a previous article
@@ -39,13 +47,15 @@ export function useArticleDetail() {
 
   // Check if there's a next article
   const hasNextArticle = computed(
-    () => currentArticleIndex.value >= 0 && currentArticleIndex.value < store.articles.length - 1
+    () =>
+      currentArticleIndex.value >= 0 &&
+      currentArticleIndex.value < navigationArticles.value.length - 1
   );
 
   // Navigate to previous article
   function goToPreviousArticle() {
     if (hasPreviousArticle.value) {
-      const prevArticle = store.articles[currentArticleIndex.value - 1];
+      const prevArticle = navigationArticles.value[currentArticleIndex.value - 1];
       store.currentArticleId = prevArticle.id;
       markAsReadIfNeeded(prevArticle);
       scrollArticleIntoView(prevArticle.id);
@@ -55,7 +65,7 @@ export function useArticleDetail() {
   // Navigate to next article
   function goToNextArticle() {
     if (hasNextArticle.value) {
-      const nextArticle = store.articles[currentArticleIndex.value + 1];
+      const nextArticle = navigationArticles.value[currentArticleIndex.value + 1];
       store.currentArticleId = nextArticle.id;
       markAsReadIfNeeded(nextArticle);
       scrollArticleIntoView(nextArticle.id);
@@ -88,7 +98,7 @@ export function useArticleDetail() {
   }
 
   // Expose articles list and index for UI display
-  const articles = computed(() => store.articles);
+  const articles = computed(() => navigationArticles.value);
   const currentArticleIndexForDisplay = computed(() => currentArticleIndex.value + 1);
 
   // Get effective view mode based on feed settings and global settings
@@ -114,6 +124,8 @@ export function useArticleDetail() {
 
   const showContent = ref(false);
   const articleContent = ref('');
+  let contentRequestId = 0;
+  let contentController: AbortController | null = null;
   const isLoadingContent = ref(false);
   const currentArticleId = ref<number | null>(null);
   const defaultViewMode = ref<ViewMode>('original');
@@ -127,6 +139,13 @@ export function useArticleDetail() {
   watch(
     () => store.currentArticleId,
     async (newId, oldId) => {
+      contentRequestId += 1;
+      contentController?.abort();
+      if (!newId) {
+        articleContent.value = '';
+        currentArticleId.value = null;
+        isLoadingContent.value = false;
+      }
       if (newId && newId !== oldId) {
         // Close image viewer when switching articles
         imageViewerSrc.value = null;
@@ -140,6 +159,7 @@ export function useArticleDetail() {
 
         // Always fetch article content for AI chat and translation features
         await fetchArticleContent();
+        if (store.currentArticleId !== newId) return;
 
         // Check if there's a pending render action from context menu
         if (pendingRenderAction.value) {
@@ -220,19 +240,20 @@ export function useArticleDetail() {
 
   async function toggleReadLater() {
     if (!article.value) return;
-    const newState = !article.value.is_read_later;
-    article.value.is_read_later = newState;
-    // When adding to read later, also mark as unread
-    if (newState) {
-      article.value.is_read = false;
-    }
+    const target = article.value;
+    const newState = !target.is_read_later;
+    target.is_read_later = newState;
     try {
-      await fetch(`/api/articles/toggle-read-later?id=${article.value.id}`, { method: 'POST' });
-      store.fetchUnreadCounts();
+      const response = await fetch(`/api/articles/toggle-read-later?id=${target.id}`, {
+        method: 'POST',
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      void store.fetchFilterCounts();
     } catch (e) {
       console.error('Error toggling read later:', e);
       // Revert on error
-      article.value.is_read_later = !newState;
+      target.is_read_later = !newState;
+      window.showToast(t('common.errors.savingSettings'), 'error');
     }
   }
 
@@ -271,45 +292,43 @@ export function useArticleDetail() {
     if (!article.value) return;
 
     const loadingArticleId = article.value.id;
+    const requestId = ++contentRequestId;
+    contentController?.abort();
+    contentController = new AbortController();
+    const isCurrent = () =>
+      requestId === contentRequestId && store.currentArticleId === loadingArticleId;
     currentArticleId.value = loadingArticleId; // Track which article we're loading
     isLoadingContent.value = true;
 
     try {
-      const res = await fetch(`/api/articles/content?id=${loadingArticleId}`);
-      if (currentArticleId.value !== loadingArticleId) return;
+      const data = await loadArticleContent(loadingArticleId, contentController.signal);
+      if (!isCurrent()) return;
 
-      if (res.ok) {
-        const data = await res.json();
-        if (currentArticleId.value !== loadingArticleId) return;
+      let content = data.content;
 
-        let content = data.content || '';
+      // Proxy images if media cache is enabled
+      const cacheEnabled = await isMediaCacheEnabled();
+      if (!isCurrent()) return;
 
-        // Proxy images if media cache is enabled
-        const cacheEnabled = await isMediaCacheEnabled();
-        if (currentArticleId.value !== loadingArticleId) return;
+      if (cacheEnabled && content) {
+        // Use feed URL as referer for anti-hotlinking (more reliable than article URL)
+        const feedUrl = data.feedUrl || article.value.url;
+        content = proxyImagesInHtml(content, feedUrl);
+      }
 
-        if (cacheEnabled && content) {
-          // Use feed URL as referer for anti-hotlinking (more reliable than article URL)
-          const feedUrl = data.feed_url || article.value.url;
-          content = proxyImagesInHtml(content, feedUrl);
-        }
+      articleContent.value = content;
 
-        articleContent.value = content;
-
-        // Only show loading animation for non-cached content
-        if (!data.cached) {
-          // Content was fetched from feed, show loading and trigger watch
-          await nextTick(); // Ensure content is rendered first
-        }
-      } else {
-        console.error('Failed to fetch article content');
-        articleContent.value = '';
+      // Only show loading animation for non-cached content
+      if (!data.cached) {
+        // Content was fetched from feed, show loading and trigger watch
+        await nextTick(); // Ensure content is rendered first
       }
     } catch (e) {
+      if (!isCurrent()) return;
       console.error('Error fetching article content:', e);
       articleContent.value = '';
     } finally {
-      if (currentArticleId.value === loadingArticleId) {
+      if (isCurrent()) {
         isLoadingContent.value = false;
       }
     }
@@ -326,6 +345,8 @@ export function useArticleDetail() {
     if (!article.value) return;
 
     const reloadingArticleId = article.value.id;
+    contentRequestId += 1;
+    contentController?.abort();
     articleContent.value = '';
     currentArticleId.value = null;
     isLoadingContent.value = true;
@@ -337,7 +358,11 @@ export function useArticleDetail() {
       if (!res.ok) {
         throw new Error(`Reload content failed: ${res.status}`);
       }
+      invalidateArticleContent(reloadingArticleId);
       if (store.currentArticleId === reloadingArticleId) {
+        window.dispatchEvent(
+          new CustomEvent('article-content-reloaded', { detail: reloadingArticleId })
+        );
         await fetchArticleContent();
       }
     } catch (e) {
@@ -354,7 +379,7 @@ export function useArticleDetail() {
   // Works on both main content and translated content
   function unwrapImagesFromLinks() {
     // Process all links in prose content (both main content and translations)
-    const links = document.querySelectorAll<HTMLAnchorElement>('.prose-content a, .prose a');
+    const links = queryArticleContentLinks();
     const linksToProcess: HTMLAnchorElement[] = [];
 
     // Collect links that contain images (check both direct children and nested)
@@ -394,13 +419,11 @@ export function useArticleDetail() {
     unwrapImagesFromLinks();
 
     // Get all images in prose content (use more specific selector)
-    const proseContainers = document.querySelectorAll('.prose-content, .prose');
-
-    if (proseContainers.length === 0) {
+    if (!hasArticleContent()) {
       return;
     }
 
-    const images = document.querySelectorAll<HTMLImageElement>('.prose-content img, .prose img');
+    const images = queryArticleContentImages();
 
     // Process images if there are any
     if (images.length > 0) {
@@ -442,9 +465,7 @@ export function useArticleDetail() {
               }
 
               // Collect all images from the article content
-              const allImages = Array.from(
-                document.querySelectorAll<HTMLImageElement>('.prose-content img, .prose img')
-              )
+              const allImages = queryArticleContentImages()
                 .filter((img) => {
                   // Filter out small icons
                   return !(img.height <= 24 && img.height > 0);
@@ -530,7 +551,7 @@ export function useArticleDetail() {
   // Works for dynamically added content (e.g., translations)
   function attachLinkEventListeners() {
     // Get all text-only links (no images) in prose content
-    const links = document.querySelectorAll<HTMLAnchorElement>('.prose-content a, .prose a');
+    const links = queryArticleContentLinks();
 
     links.forEach((link) => {
       try {
@@ -899,6 +920,8 @@ export function useArticleDetail() {
   });
 
   onBeforeUnmount(() => {
+    contentRequestId += 1;
+    contentController?.abort();
     window.removeEventListener('render-article-content', handleRenderContent);
     window.removeEventListener('explicit-render-action', handleExplicitRenderAction);
     window.removeEventListener('toggle-content-view', handleToggleContentView);

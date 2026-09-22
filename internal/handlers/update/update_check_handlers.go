@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"syscall"
@@ -69,6 +70,32 @@ func isNetworkError(err error) bool {
 	return false
 }
 
+func createUpdateHTTPClient(h *core.Handler, timeout time.Duration) (*http.Client, error) {
+	var proxyURL string
+	if h != nil && h.DB != nil {
+		proxyEnabled, _ := h.DB.GetSetting("proxy_enabled")
+		if proxyEnabled == "true" {
+			proxyType, _ := h.DB.GetSetting("proxy_type")
+			proxyHost, _ := h.DB.GetSetting("proxy_host")
+			proxyPort, _ := h.DB.GetSetting("proxy_port")
+			proxyUsername, _ := h.DB.GetEncryptedSetting("proxy_username")
+			proxyPassword, _ := h.DB.GetEncryptedSetting("proxy_password")
+			proxyURL = httputil.BuildProxyURL(proxyType, proxyHost, proxyPort, proxyUsername, proxyPassword)
+		}
+	}
+	client, err := httputil.CreateHTTPClient(proxyURL, timeout)
+	if err != nil {
+		return nil, err
+	}
+	if transport, ok := client.Transport.(*http.Transport); ok {
+		transport.DialContext = (&net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+		transport.TLSHandshakeTimeout = 15 * time.Second
+		transport.ResponseHeaderTimeout = 30 * time.Second
+		transport.ExpectContinueTimeout = time.Second
+	}
+	return client, nil
+}
+
 // HandleCheckUpdates checks for the latest stable version on GitHub.
 // Pre-release versions (alpha, beta) are filtered out.
 // @Summary      Check for updates
@@ -89,20 +116,8 @@ func HandleCheckUpdates(h *core.Handler, w http.ResponseWriter, r *http.Request)
 	// Use /releases endpoint to get all releases, then filter for stable versions
 	const githubAPI = "https://api.github.com/repos/DevXDojo/MrRSS/releases"
 
-	// Create HTTP client with global proxy support
-	var proxyURL string
-	proxyEnabled, _ := h.DB.GetSetting("proxy_enabled")
-	if proxyEnabled == "true" {
-		// Build proxy URL from global settings (use encrypted methods for credentials)
-		proxyType, _ := h.DB.GetSetting("proxy_type")
-		proxyHost, _ := h.DB.GetSetting("proxy_host")
-		proxyPort, _ := h.DB.GetSetting("proxy_port")
-		proxyUsername, _ := h.DB.GetEncryptedSetting("proxy_username")
-		proxyPassword, _ := h.DB.GetEncryptedSetting("proxy_password")
-		proxyURL = httputil.BuildProxyURL(proxyType, proxyHost, proxyPort, proxyUsername, proxyPassword)
-	}
-
-	client, err := httputil.CreateHTTPClient(proxyURL, 30*time.Second)
+	// Use the same proxy-aware client as the update downloader.
+	client, err := createUpdateHTTPClient(h, 30*time.Second)
 	if err != nil {
 		log.Printf("Error creating HTTP client: %v", err)
 		response.JSON(w, map[string]interface{}{
@@ -201,6 +216,9 @@ func HandleCheckUpdates(h *core.Handler, w http.ResponseWriter, r *http.Request)
 	platform := runtime.GOOS
 	arch := runtime.GOARCH
 	isPortable := fileutil.IsPortableMode()
+	if platform == "linux" && os.Getenv("APPIMAGE") != "" {
+		isPortable = false
+	}
 
 	for _, asset := range release.Assets {
 		name := strings.ToLower(asset.Name)

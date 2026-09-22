@@ -22,12 +22,16 @@ import (
 
 	"MrRSS/internal/ai"
 	"MrRSS/internal/database"
+	"MrRSS/internal/desktopapi"
 	"MrRSS/internal/feed"
 	handlers "MrRSS/internal/handlers/core"
 	"MrRSS/internal/monitor"
 	"MrRSS/internal/network"
 	"MrRSS/internal/routes"
+	"MrRSS/internal/singleinstance"
 	"MrRSS/internal/translation"
+	"MrRSS/internal/tray"
+	"MrRSS/internal/utils"
 	"MrRSS/internal/utils/fileutil"
 	"MrRSS/internal/utils/httputil"
 )
@@ -61,15 +65,6 @@ func getAppIcon() []byte {
 	return appIconMacOS
 }
 
-type windowState struct {
-	width     int
-	height    int
-	x         int
-	y         int
-	valid     atomic.Bool
-	maximized atomic.Bool
-}
-
 type CombinedHandler struct {
 	apiMux     *http.ServeMux
 	fileServer http.Handler
@@ -99,6 +94,41 @@ func APIMiddleware(combinedHandler *CombinedHandler) application.Middleware {
 }
 
 func main() {
+	startMinimizedRequested := false
+	for _, arg := range os.Args[1:] {
+		if arg == "--start-minimized" {
+			startMinimizedRequested = true
+			break
+		}
+	}
+
+	dataDirOption, err := fileutil.DataDirArgument(os.Args[1:])
+	if err != nil {
+		log.Fatal(err)
+	}
+	storageLock, err := fileutil.InitializeDesktopStorage(dataDirOption)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	if storageLock != nil {
+		defer storageLock.Close()
+	}
+	// Reject duplicate Linux launches before truncating logs, opening SQLite,
+	// running migrations, or starting schedulers. This does not depend on D-Bus.
+	dataDir, err := fileutil.GetDataDir()
+	if err != nil {
+		log.Fatal(err)
+	}
+	instanceLock, err := singleinstance.Acquire(dataDir)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	if instanceLock != nil {
+		defer instanceLock.Close()
+	}
+
 	// Get proper paths for data files
 	logPath, err := fileutil.GetLogPath()
 	if err != nil {
@@ -128,6 +158,14 @@ func main() {
 	}
 
 	log.Printf("Log file: %s", logPath)
+
+	linuxWindowOptions, err := configureLinuxRendering(runtime.GOOS, os.Args[1:])
+	if err != nil {
+		log.Fatal(err)
+	}
+	if linuxWindowOptions.WebviewGpuPolicy == application.WebviewGpuPolicyNever {
+		log.Println("Linux software rendering enabled (--software-rendering)")
+	}
 
 	// Get database path
 	dbPath, err := fileutil.GetDBPath()
@@ -160,9 +198,28 @@ func main() {
 
 	fetcher := feed.NewFetcher(db)
 	h := handlers.NewHandler(db, fetcher, translator, profileProvider)
+	h.SetStartupOnBoot = func(enabled bool) error {
+		if enabled {
+			return utils.EnableStartup()
+		}
+		return utils.DisableStartup()
+	}
+
+	// Repair the OS integration for users whose preference was saved before
+	// startup registration was wired to the settings endpoint.
+	if startupOnBoot, err := db.GetSetting("startup_on_boot"); err == nil && startupOnBoot == "true" {
+		if err := utils.EnableStartup(); err != nil {
+			log.Printf("Failed to restore system startup integration: %v", err)
+		}
+	}
 
 	var quitRequested atomic.Bool
-	var lastWindowState windowState
+	var lastMaximized atomic.Bool
+	var hiddenToTray atomic.Bool
+	var hideAfterFullscreen atomic.Bool
+	startupMinimized, _ := db.GetSetting("startup_minimized")
+	startHidden := startMinimizedRequested && startupMinimized == "true"
+	hiddenToTray.Store(startHidden)
 
 	// API Routes
 	log.Println("Setting up API routes...")
@@ -206,6 +263,16 @@ func main() {
 
 	// Variable to store the main window reference
 	var mainWindow application.Window
+	showMainWindow := func() {
+		if mainWindow == nil {
+			return
+		}
+		hideAfterFullscreen.Store(false)
+		// Read the snapshot before Show/UnMinimise can emit native state events.
+		restoreMaximized := hiddenToTray.Load() && lastMaximized.Load()
+		showExistingWindow(mainWindow, restoreMaximized)
+		hiddenToTray.Store(false)
+	}
 
 	log.Println("Starting Wails v3...")
 
@@ -231,41 +298,7 @@ func main() {
 				EncryptionKey: encryptionKey,
 				OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
 					log.Printf("Second instance detected, bringing window to front")
-					if mainWindow != nil {
-						// Restore window state if it was stored (minimized to tray)
-						if lastWindowState.valid.Load() {
-							width := lastWindowState.width
-							height := lastWindowState.height
-							x := lastWindowState.x
-							y := lastWindowState.y
-
-							// Ensure minimum window size
-							if width < 400 {
-								width = 1024
-							}
-							if height < 300 {
-								height = 768
-							}
-
-							// Ensure window is at least partially on screen
-							if x < -1000 || x > 3000 {
-								x = 100
-							}
-							if y < -1000 || y > 3000 {
-								y = 100
-							}
-
-							mainWindow.SetSize(width, height)
-							mainWindow.SetPosition(x, y)
-						}
-						// Show and unminimize the window
-						mainWindow.Show()
-						if lastWindowState.maximized.Load() {
-							mainWindow.Maximise()
-						} else {
-							mainWindow.Restore()
-						}
-					}
+					showMainWindow()
 				},
 			}
 		}(),
@@ -273,7 +306,28 @@ func main() {
 
 	// Set app instance to handler for browser integration
 	h.SetApp(app)
+	h.QuitForUpdate = func() {
+		quitRequested.Store(true)
+		app.Quit()
+	}
 	log.Println("Browser integration enabled")
+
+	// Expose the API to local integrations such as the mrrss-assistant skill.
+	// The listener is loopback-only and deliberately does not serve frontend assets.
+	desktopAPIServer, apiErr := desktopapi.Start(
+		desktopapi.DefaultAddress,
+		routes.WrapWithMiddleware(apiMux, routes.DefaultConfig()),
+	)
+	if apiErr != nil {
+		log.Printf("Local desktop API unavailable: %v", apiErr)
+	} else {
+		log.Printf("Local desktop API listening on http://%s/api", desktopAPIServer.Address())
+		go func() {
+			if serveErr := <-desktopAPIServer.Errors(); serveErr != nil {
+				log.Printf("Local desktop API stopped unexpectedly: %v", serveErr)
+			}
+		}()
+	}
 
 	// Get window dimensions from stored state or defaults
 	windowWidth := 1024
@@ -302,12 +356,7 @@ func main() {
 											windowX = xInt
 											windowY = yInt
 											restoredFromDB = true
-											// Store in memory for minimize-restore
-											lastWindowState.width = widthInt
-											lastWindowState.height = heightInt
-											lastWindowState.x = xInt
-											lastWindowState.y = yInt
-											lastWindowState.valid.Store(true)
+
 										}
 									}
 								}
@@ -321,7 +370,7 @@ func main() {
 
 	if maximized, err := db.GetSetting("window_maximized"); err == nil && maximized == "true" {
 		restoredMaximized = true
-		lastWindowState.maximized.Store(true)
+		lastMaximized.Store(true)
 	}
 
 	// Determine background color based on theme setting
@@ -345,8 +394,9 @@ func main() {
 		URL:              "/",
 		Mac:              application.MacWindow{},
 		Windows:          application.WindowsWindow{},
-		Linux:            application.LinuxWindow{},
+		Linux:            linuxWindowOptions,
 		BackgroundColour: backgroundColour,
+		Hidden:           startHidden,
 	}
 
 	// Set position if restored from DB
@@ -361,29 +411,15 @@ func main() {
 	if !restoredFromDB {
 		mainWindow.Center()
 	}
-	if restoredMaximized {
+	if restoredMaximized && !startHidden {
 		mainWindow.Maximise()
 	}
 
-	// Helper function to store window state
+	// Capture only at an explicit hide. Native windows keep their own normal bounds;
+	// replaying Size/Position on restore can unmaximize the window and emit resize races.
 	storeWindowState := func() {
-		if mainWindow == nil {
-			return
-		}
-
-		w, h := mainWindow.Size()
-		x, y := mainWindow.Position()
-		lastWindowState.maximized.Store(mainWindow.IsMaximised())
-
-		// Only store state if it's valid (reasonable size and position)
-		if w >= 400 && h >= 300 && w <= 4000 && h <= 3000 {
-			if x > -1000 && x < 3000 && y > -1000 && y < 3000 {
-				lastWindowState.width = w
-				lastWindowState.height = h
-				lastWindowState.x = x
-				lastWindowState.y = y
-				lastWindowState.valid.Store(true)
-			}
+		if mainWindow != nil && !hiddenToTray.Load() && !mainWindow.IsMinimised() {
+			lastMaximized.Store(mainWindow.IsMaximised())
 		}
 	}
 
@@ -391,14 +427,17 @@ func main() {
 	var systemTray *application.SystemTray
 
 	setupSystemTray := func() {
-		if systemTray != nil {
-			return // Already set up
+		if systemTray == nil {
+			systemTray = app.SystemTray.New()
+			systemTray.SetIcon(getAppIcon())
+			// Handle clicks on tray icon to show window. Register this only once.
+			systemTray.OnClick(func() {
+				showMainWindow()
+			})
 		}
 
-		systemTray = app.SystemTray.New()
-		systemTray.SetIcon(getAppIcon())
-
-		// Create tray menu
+		// Rebuild the menu whenever the window is sent to the tray so a language
+		// change made in settings is reflected without restarting the app.
 		trayMenu := app.NewMenu()
 
 		// Get language for labels
@@ -408,8 +447,8 @@ func main() {
 		}
 
 		var showLabel, refreshLabel, quitLabel string
-		switch lang {
-		case "zh-CN", "zh", "zh-cn":
+		switch {
+		case strings.HasPrefix(strings.ToLower(strings.TrimSpace(lang)), "zh"):
 			showLabel = "显示 MrRSS"
 			refreshLabel = "立即刷新"
 			quitLabel = "退出"
@@ -420,37 +459,7 @@ func main() {
 		}
 
 		trayMenu.Add(showLabel).OnClick(func(ctx *application.Context) {
-			if mainWindow != nil {
-				// Restore window state if it was stored
-				if lastWindowState.valid.Load() {
-					width := lastWindowState.width
-					height := lastWindowState.height
-					x := lastWindowState.x
-					y := lastWindowState.y
-
-					if width < 400 {
-						width = 1024
-					}
-					if height < 300 {
-						height = 768
-					}
-					if x < -1000 || x > 3000 {
-						x = 100
-					}
-					if y < -1000 || y > 3000 {
-						y = 100
-					}
-
-					mainWindow.SetSize(width, height)
-					mainWindow.SetPosition(x, y)
-				}
-				mainWindow.Show()
-				if lastWindowState.maximized.Load() {
-					mainWindow.Maximise()
-				} else {
-					mainWindow.Restore()
-				}
-			}
+			showMainWindow()
 		})
 
 		trayMenu.Add(refreshLabel).OnClick(func(ctx *application.Context) {
@@ -467,105 +476,79 @@ func main() {
 		})
 
 		systemTray.SetMenu(trayMenu)
-
-		// Handle clicks on tray icon to show window
-		systemTray.OnClick(func() {
-			if mainWindow != nil {
-				mainWindow.Show()
-				if lastWindowState.maximized.Load() {
-					mainWindow.Maximise()
-				} else {
-					mainWindow.Restore()
-				}
-			}
-		})
 	}
 
-	// Track last window close attempt to handle macOS fullscreen properly
-	var lastCloseAttempt atomic.Int64
-
-	// Register hook for window closing event
-	mainWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
-		if quitRequested.Load() {
-			return // Allow close
-		}
-
-		if shouldCloseToTray() {
-			// On macOS, handle fullscreen exit gracefully
-			if runtime.GOOS == "darwin" {
-				now := time.Now().UnixMilli()
-				last := lastCloseAttempt.Load()
-
-				// If last close was within 500ms, user clicked close twice quickly
-				// This means fullscreen exit completed, proceed with hiding
-				if last > 0 && (now-last) < 500 {
-					lastCloseAttempt.Store(0) // Reset
-					storeWindowState()
-					setupSystemTray()
-					mainWindow.Hide()
-					e.Cancel()
-					return
-				}
-
-				// First close attempt - try to exit fullscreen
-				lastCloseAttempt.Store(now)
-				mainWindow.Restore()
-				// Cancel this close event
-				// If window was fullscreen, user needs to click close again
-				// If not fullscreen, Restore() does nothing and next close will proceed
-				e.Cancel()
-				return
-			}
-
-			// Non-macOS platforms: directly hide to tray
-			storeWindowState()
-			setupSystemTray()
+	// Fullscreen exits asynchronously on macOS. Hide on its completion event,
+	// rather than requiring a second close within an arbitrary time window.
+	mainWindow.RegisterHook(events.Common.WindowUnFullscreen, func(e *application.WindowEvent) {
+		if hideAfterFullscreen.Swap(false) && !quitRequested.Load() {
+			hiddenToTray.Store(true)
 			mainWindow.Hide()
-			e.Cancel()
 		}
 	})
 
-	// Register move and resize handlers to save window state
-	mainWindow.RegisterHook(events.Common.WindowDidMove, func(e *application.WindowEvent) {
+	mainWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		if quitRequested.Load() || !shouldCloseToTray() {
+			return
+		}
+		e.Cancel()
+		if hideAfterFullscreen.Load() {
+			return
+		}
 		storeWindowState()
-	})
-
-	mainWindow.RegisterHook(events.Common.WindowDidResize, func(e *application.WindowEvent) {
-		storeWindowState()
+		setupSystemTray()
+		if runtime.GOOS == "darwin" && mainWindow.IsFullscreen() {
+			hideAfterFullscreen.Store(true)
+			mainWindow.UnFullscreen()
+			return
+		}
+		hiddenToTray.Store(true)
+		mainWindow.Hide()
 	})
 
 	mainWindow.RegisterHook(events.Common.WindowMaximise, func(e *application.WindowEvent) {
-		lastWindowState.maximized.Store(true)
+		if hiddenToTray.Load() {
+			return
+		}
+		lastMaximized.Store(true)
 		if err := db.SetSetting("window_maximized", "true"); err != nil {
 			log.Printf("Failed to save maximized window state: %v", err)
 		}
 	})
 
 	mainWindow.RegisterHook(events.Common.WindowUnMaximise, func(e *application.WindowEvent) {
-		lastWindowState.maximized.Store(false)
+		if hiddenToTray.Load() {
+			return
+		}
+		lastMaximized.Store(false)
 		if err := db.SetSetting("window_maximized", "false"); err != nil {
 			log.Printf("Failed to save unmaximized window state: %v", err)
 		}
 		storeWindowState()
 	})
 
-	// Setup tray on startup if close_to_tray is enabled
-	if shouldCloseToTray() {
+	// macOS also uses the status item for its unread indicator.
+	if startHidden || shouldCloseToTray() || runtime.GOOS == "darwin" {
 		setupSystemTray()
+	}
+	if runtime.GOOS == "darwin" {
+		app.OnShutdown(bgCancel)
+		app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(event *application.ApplicationEvent) {
+			go tray.WatchUnread(bgCtx, db, func(label string) {
+				application.InvokeAsync(func() {
+					if bgCtx.Err() == nil {
+						systemTray.SetLabel(label)
+					}
+				})
+			})
+		})
 	}
 
 	// On macOS, handle dock icon click to show the window
 	if runtime.GOOS == "darwin" {
 		app.Event.OnApplicationEvent(events.Mac.ApplicationShouldHandleReopen, func(event *application.ApplicationEvent) {
 			log.Println("Dock icon clicked, showing window")
-			if mainWindow != nil {
-				mainWindow.Show()
-				if lastWindowState.maximized.Load() {
-					mainWindow.Maximise()
-				} else {
-					mainWindow.Restore()
-				}
-			}
+			showMainWindow()
 		})
 	}
 
@@ -640,6 +623,13 @@ func main() {
 
 	// Cleanup when app exits
 	log.Println("Shutting down...")
+	if desktopAPIServer != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if shutdownErr := desktopAPIServer.Shutdown(shutdownCtx); shutdownErr != nil {
+			log.Printf("Local desktop API shutdown failed: %v", shutdownErr)
+		}
+		shutdownCancel()
+	}
 
 	// Stop background tasks first
 	bgCancel()

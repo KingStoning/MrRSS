@@ -167,20 +167,16 @@ export function isFontAvailable(fontName: string): boolean {
   const context = canvas.getContext('2d');
   if (!context) return false;
 
-  // Use a wide test text
-  const testText = 'mmmmmmmmmmlli';
-
-  // Set default font
-  const defaultFont = 'sans-serif';
-  context.font = `100px ${defaultFont}`;
-  const defaultWidth = context.measureText(testText).width;
-
-  // Test the candidate font
-  context.font = `100px "${fontName}", ${defaultFont}`;
-  const testWidth = context.measureText(testText).width;
-
-  // If widths are different, the font is available
-  return defaultWidth !== testWidth;
+  // CJK-only faces often share Latin glyph metrics with the default font.
+  // Compare mixed-script text against multiple fallback families.
+  const text = 'mmmmmmmmmmlli 汉字字体测试 あいうえお 한글';
+  const escaped = fontName.replace(/["\\]/g, '\\$&');
+  return ['monospace', 'serif', 'sans-serif'].some((fallback) => {
+    context.font = `100px ${fallback}`;
+    const baseline = context.measureText(text).width;
+    context.font = `100px "${escaped}", ${fallback}`;
+    return context.measureText(text).width !== baseline;
+  });
 }
 
 /**

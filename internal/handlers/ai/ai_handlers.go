@@ -1,16 +1,15 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"MrRSS/internal/ai"
 	"MrRSS/internal/config"
 	"MrRSS/internal/handlers/core"
 	"MrRSS/internal/handlers/response"
+	"MrRSS/internal/utils/httputil"
 )
 
 // TestResult represents the result of AI configuration test
@@ -21,6 +20,7 @@ type TestResult struct {
 	ResponseTimeMs    int64  `json:"response_time_ms"`
 	TestTime          string `json:"test_time"`
 	ErrorMessage      string `json:"error_message,omitempty"`
+	ErrorCode         string `json:"error_code,omitempty"`
 }
 
 // HandleTestAIConfig handles POST /api/ai/test to test AI configuration
@@ -71,7 +71,8 @@ func HandleTestAIConfig(h *core.Handler, w http.ResponseWriter, r *http.Request)
 	}
 
 	if !result.ConfigValid {
-		result.ErrorMessage = "Configuration incomplete: " + strings.Join(validationErrors, ", ")
+		result.ErrorMessage = ai.UserFacingErrorForCode(ai.ErrorCodeConfigurationInvalid).Message
+		result.ErrorCode = ai.ErrorCodeConfigurationInvalid
 		response.JSON(w, result)
 		return
 	}
@@ -80,7 +81,8 @@ func HandleTestAIConfig(h *core.Handler, w http.ResponseWriter, r *http.Request)
 	parsedURL, err := url.Parse(endpoint)
 	if err != nil {
 		result.ConfigValid = false
-		result.ErrorMessage = "Invalid endpoint URL: " + err.Error()
+		result.ErrorMessage = ai.UserFacingErrorForCode(ai.ErrorCodeConfigurationInvalid).Message
+		result.ErrorCode = ai.ErrorCodeConfigurationInvalid
 		response.JSON(w, result)
 		return
 	}
@@ -88,7 +90,8 @@ func HandleTestAIConfig(h *core.Handler, w http.ResponseWriter, r *http.Request)
 	// Both HTTP and HTTPS are allowed
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
 		result.ConfigValid = false
-		result.ErrorMessage = "API endpoint must use HTTP or HTTPS"
+		result.ErrorMessage = ai.UserFacingErrorForCode(ai.ErrorCodeConfigurationInvalid).Message
+		result.ErrorCode = ai.ErrorCodeConfigurationInvalid
 		response.JSON(w, result)
 		return
 	}
@@ -99,9 +102,11 @@ func HandleTestAIConfig(h *core.Handler, w http.ResponseWriter, r *http.Request)
 	// Create HTTP client with proxy support if configured
 	httpClient, err := createHTTPClientWithProxy(h)
 	if err != nil {
+		publicErr := ai.ClassifyUserFacingError(err)
 		result.ConnectionSuccess = false
 		result.ModelAvailable = false
-		result.ErrorMessage = fmt.Sprintf("Failed to create HTTP client: %v", err)
+		result.ErrorMessage = publicErr.Message
+		result.ErrorCode = publicErr.Code
 		result.ResponseTimeMs = time.Since(startTime).Milliseconds()
 		response.JSON(w, result)
 		return
@@ -121,9 +126,11 @@ func HandleTestAIConfig(h *core.Handler, w http.ResponseWriter, r *http.Request)
 	_, err = client.Request("", "test")
 
 	if err != nil {
+		publicErr := ai.ClassifyUserFacingError(err)
 		result.ConnectionSuccess = false
 		result.ModelAvailable = false
-		result.ErrorMessage = fmt.Sprintf("Connection failed: %v", err)
+		result.ErrorMessage = publicErr.Message
+		result.ErrorCode = publicErr.Code
 	} else {
 		result.ConnectionSuccess = true
 		result.ModelAvailable = true
@@ -163,59 +170,5 @@ func HandleGetAITestInfo(h *core.Handler, w http.ResponseWriter, r *http.Request
 
 // createHTTPClientWithProxy creates an HTTP client with global proxy settings if enabled
 func createHTTPClientWithProxy(h *core.Handler) (*http.Client, error) {
-	// Check if global proxy is enabled
-	proxyEnabled, _ := h.DB.GetSetting("proxy_enabled")
-	if proxyEnabled != "true" {
-		return &http.Client{}, nil
-	}
-
-	// Build proxy URL from global settings
-	proxyType, _ := h.DB.GetSetting("proxy_type")
-	proxyHost, _ := h.DB.GetSetting("proxy_host")
-	proxyPort, _ := h.DB.GetSetting("proxy_port")
-	proxyUsername, _ := h.DB.GetEncryptedSetting("proxy_username")
-	proxyPassword, _ := h.DB.GetEncryptedSetting("proxy_password")
-
-	// Build proxy URL
-	proxyURL := buildProxyURL(proxyType, proxyHost, proxyPort, proxyUsername, proxyPassword)
-
-	if proxyURL == "" {
-		return &http.Client{}, nil
-	}
-
-	// Parse proxy URL
-	u, err := url.Parse(proxyURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid proxy URL: %w", err)
-	}
-
-	return &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(u),
-		},
-	}, nil
-}
-
-// buildProxyURL builds a proxy URL from components
-func buildProxyURL(proxyType, proxyHost, proxyPort, proxyUsername, proxyPassword string) string {
-	if proxyHost == "" || proxyPort == "" {
-		return ""
-	}
-
-	var urlBuilder strings.Builder
-	urlBuilder.WriteString(strings.ToLower(proxyType))
-	urlBuilder.WriteString("://")
-
-	if proxyUsername != "" && proxyPassword != "" {
-		urlBuilder.WriteString(url.QueryEscape(proxyUsername))
-		urlBuilder.WriteString(":")
-		urlBuilder.WriteString(url.QueryEscape(proxyPassword))
-		urlBuilder.WriteString("@")
-	}
-
-	urlBuilder.WriteString(proxyHost)
-	urlBuilder.WriteString(":")
-	urlBuilder.WriteString(proxyPort)
-
-	return urlBuilder.String()
+	return httputil.CreateHTTPClientWithProxySettings(h.DB, 30*time.Second)
 }
