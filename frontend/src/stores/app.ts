@@ -339,7 +339,7 @@ export const useAppStore = defineStore('app', () => {
     isLoading.value = true;
     const limit = 50;
 
-    let url = `/api/articles?page=${page.value}&limit=${limit}`;
+    let url = `/api/articles?page=${page.value}&limit=${limit}&include_content=true`;
     url += `&sort_order=${articleSortOrder.value}`;
     url += `&group_by=${articleGroupBy.value}`;
     if (currentFilter.value) url += `&filter=${currentFilter.value}`;

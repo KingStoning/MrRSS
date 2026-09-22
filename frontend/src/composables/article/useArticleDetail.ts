@@ -298,15 +298,24 @@ export function useArticleDetail() {
     const isCurrent = () =>
       requestId === contentRequestId && store.currentArticleId === loadingArticleId;
     currentArticleId.value = loadingArticleId; // Track which article we're loading
-    isLoadingContent.value = true;
-
+    const storedBody = article.value.cached_content;
+    articleContent.value = storedBody ?? '';
+    isLoadingContent.value = storedBody === undefined;
     try {
-      const data = await loadArticleContent(loadingArticleId, contentController.signal);
+      const data =
+        storedBody !== undefined
+          ? {
+              content: storedBody,
+              cached: true,
+              feedUrl: store.feeds.find((f) => f.id === article.value?.feed_id)?.url || '',
+            }
+          : await loadArticleContent(loadingArticleId, contentController.signal);
       if (!isCurrent()) return;
 
       let content = data.content;
 
       // Proxy images if media cache is enabled
+      if (storedBody === undefined) articleContent.value = data.content;
       const cacheEnabled = await isMediaCacheEnabled();
       if (!isCurrent()) return;
 
@@ -359,6 +368,8 @@ export function useArticleDetail() {
         throw new Error(`Reload content failed: ${res.status}`);
       }
       invalidateArticleContent(reloadingArticleId);
+      const target = store.articles.find((a) => a.id === reloadingArticleId);
+      if (target) target.cached_content = undefined;
       if (store.currentArticleId === reloadingArticleId) {
         window.dispatchEvent(
           new CustomEvent('article-content-reloaded', { detail: reloadingArticleId })

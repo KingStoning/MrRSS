@@ -64,6 +64,9 @@ func HandleArticles(h *core.Handler, w http.ResponseWriter, r *http.Request) {
 		limit = l
 	}
 
+	if limit > 500 {
+		limit = 500
+	}
 	offset := (page - 1) * limit
 
 	// Get show_hidden_articles setting
@@ -74,6 +77,22 @@ func HandleArticles(h *core.Handler, w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		response.Error(w, err, http.StatusInternalServerError)
 		return
+	}
+	if r.URL.Query().Get("include_content") == "true" {
+		ids := make([]int64, len(articles))
+		for i := range articles {
+			ids[i] = articles[i].ID
+		}
+		bodies, err := h.DB.GetArticleContentsBatch(ids)
+		if err != nil {
+			response.Error(w, err, http.StatusInternalServerError)
+			return
+		}
+		for i := range articles {
+			if body, ok := bodies[articles[i].ID]; ok {
+				articles[i].CachedContent = &body
+			}
+		}
 	}
 	response.JSON(w, articles)
 }
@@ -201,6 +220,9 @@ func HandleImageGalleryArticles(h *core.Handler, w http.ResponseWriter, r *http.
 		limit = l
 	}
 
+	if limit > 500 {
+		limit = 500
+	}
 	offset := (page - 1) * limit
 
 	// Get show_hidden_articles setting

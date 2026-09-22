@@ -691,8 +691,7 @@ func (s *BidirectionalSyncService) saveArticlesFromServer(ctx context.Context, a
 	}
 
 	// Convert FreshRSS articles to models.Article
-	mrssArticles := make([]*models.Article, 0, len(articles))
-	articleContentMap := make(map[string]string)
+	savedCount := 0
 	skippedCount := 0
 
 	for _, article := range articles {
@@ -740,156 +739,18 @@ func (s *BidirectionalSyncService) saveArticlesFromServer(ctx context.Context, a
 			}
 		}
 
-		// Check if article already exists (by URL)
-		existingArticle, err := s.db.GetArticleByURL(article.URL, s.provider)
-
-		if err == nil && existingArticle != nil {
-			// Article already exists - this is the deduplication logic
-			// Update the article with FreshRSS data, preserving FreshRSS ID
-			updated := false
-
-			// ALWAYS update FreshRSS Item ID if provided by FreshRSS
-			// This ensures that even if the article came from a non-FreshRSS source,
-			// it will be linked to FreshRSS for future sync operations
-			if article.ID != "" && existingArticle.FreshRSSItemID != article.ID {
-				err := s.db.UpdateFreshRSSItemID(existingArticle.ID, article.ID)
-				if err != nil {
-					log.Printf("Warning: Failed to update FreshRSS Item ID for article %s: %v", article.URL, err)
-				} else {
-					log.Printf("Updated FreshRSS Item ID for existing article %s: %s (was: %s)",
-						article.URL, article.ID, existingArticle.FreshRSSItemID)
-					updated = true
-				}
-			}
-
-			// Update read status from FreshRSS (server is authoritative)
-			// Only update if status differs to avoid unnecessary writes
-			if isRead != existingArticle.IsRead {
-				err := s.db.MarkArticleRead(existingArticle.ID, isRead)
-				if err != nil {
-					log.Printf("Warning: Failed to update read status for article %s: %v", article.URL, err)
-				} else {
-					log.Printf("Updated read status for article %s: %v (from FreshRSS)", article.URL, isRead)
-					updated = true
-				}
-			}
-
-			// Update favorite status from FreshRSS (server is authoritative)
-			if isStarred != existingArticle.IsFavorite {
-				err := s.db.SetArticleFavorite(existingArticle.ID, isStarred)
-				if err != nil {
-					log.Printf("Warning: Failed to update favorite status for article %s: %v", article.URL, err)
-				} else {
-					log.Printf("Updated favorite status for article %s: %v (from FreshRSS)", article.URL, isStarred)
-					updated = true
-				}
-			}
-
-			// Extract and update thumbnail if article doesn't have one but has content
-			if article.Content != "" {
-				// Check if article already has an image URL
-				var existingImageURL string
-				err := s.db.QueryRow("SELECT image_url FROM articles WHERE id = ?", existingArticle.ID).Scan(&existingImageURL)
-				hasImage := err == nil && existingImageURL != ""
-
-				if !hasImage {
-					imageURL := extractImageURLFromHTML(article.Content)
-					if imageURL != "" {
-						// Update the article with the extracted image URL
-						_, err := s.db.Exec("UPDATE articles SET image_url = ? WHERE id = ?", imageURL, existingArticle.ID)
-						if err != nil {
-							log.Printf("Warning: Failed to update image URL for article %s: %v", article.URL, err)
-						} else {
-							log.Printf("Updated image URL for article %s: %s (from FreshRSS)", article.URL, imageURL)
-							updated = true
-						}
-					}
-				}
-			}
-
-			// If the existing article is NOT from FreshRSS but we just updated it,
-			// we should mark it as coming from FreshRSS if it's in a FreshRSS feed
-			if existingArticle.FreshRSSItemID == "" && article.ID != "" {
-				// This article now has a FreshRSS ID
-				updated = true
-			}
-
-			if updated {
-				log.Printf("Merged FreshRSS data into existing article: %s", article.URL)
-			}
-			continue
+		saved := &models.Article{
+			FeedID: feedID, Title: article.Title, URL: article.URL,
+			ImageURL:    extractImageURLFromHTML(article.Content),
+			PublishedAt: article.Published, IsRead: isRead, IsFavorite: isStarred,
+			FreshRSSItemID: article.ID,
 		}
-
-		// Extract thumbnail from article content before creating the article
-		imageURL := extractImageURLFromHTML(article.Content)
-
-		// Create new article
-		mrssArticle := &models.Article{
-			FeedID:         feedID,
-			Title:          article.Title,
-			URL:            article.URL,
-			ImageURL:       imageURL,
-			Summary:        "",
-			PublishedAt:    article.Published,
-			IsRead:         isRead,
-			IsFavorite:     isStarred,
-			FreshRSSItemID: article.ID, // Save FreshRSS/Google Reader item ID
+		if err := s.db.SaveReaderArticle(ctx, s.provider, saved, article.Content); err != nil {
+			return savedCount, fmt.Errorf("save reader article: %w", err)
 		}
-
-		mrssArticles = append(mrssArticles, mrssArticle)
-
-		// Store content for later insertion
-		if article.Content != "" {
-			articleContentMap[article.URL] = article.Content
-		}
+		savedCount++
 	}
-
-	if skippedCount > 5 {
-		log.Printf("Warning: Skipped %d articles due to missing feed mapping", skippedCount)
-	}
-
-	if len(mrssArticles) == 0 {
-		return 0, nil
-	}
-
-	// Save articles to database
-	err = s.db.SaveArticles(ctx, mrssArticles)
-	if err != nil {
-		return 0, fmt.Errorf("save articles: %w", err)
-	}
-
-	// SaveArticles preserves local state; retain the remote identifier for immediate status updates.
-	for _, article := range mrssArticles {
-		saved, err := s.db.GetArticleByURL(article.URL, s.provider)
-		if err != nil {
-			return 0, err
-		}
-		if err := s.db.UpdateFreshRSSItemID(saved.ID, article.FreshRSSItemID); err != nil {
-			return 0, err
-		}
-	}
-
-	// Save article contents
-	contentSavedCount := 0
-	for url, content := range articleContentMap {
-		savedArticle, err := s.db.GetArticleByURL(url, s.provider)
-		if err != nil {
-			log.Printf("Warning: Could not find saved article with URL %s to set content", url)
-			continue
-		}
-
-		if err := s.db.SetArticleContent(savedArticle.ID, content); err != nil {
-			log.Printf("Warning: Failed to save content for article ID %d: %v", savedArticle.ID, err)
-		} else {
-			contentSavedCount++
-		}
-	}
-
-	if contentSavedCount > 0 {
-		log.Printf("Saved content for %d articles", contentSavedCount)
-	}
-
-	return len(mrssArticles), nil
+	return savedCount, nil
 }
 
 func isGoogleReaderState(category, state string) bool {
