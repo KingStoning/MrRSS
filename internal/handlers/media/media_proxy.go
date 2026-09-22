@@ -92,7 +92,7 @@ func ProxyImagesInHTML(htmlContent, referer string) string {
 		// This prevents double-encoding problems with special characters
 		// Base64 encoding is safe for URLs and doesn't interfere with query parameter parsing
 		proxyURL := fmt.Sprintf("/api/media/proxy?url_b64=%s",
-			base64.StdEncoding.EncodeToString([]byte(srcURL)))
+			url.QueryEscape(base64.StdEncoding.EncodeToString([]byte(srcURL))))
 
 		// CRITICAL FIX: Determine if we should use the referer or not
 		// Some sites block requests from certain referers (e.g., RSS hubs)
@@ -102,7 +102,7 @@ func ProxyImagesInHTML(htmlContent, referer string) string {
 		// Add referer if provided (also base64-encoded)
 		if proxyReferer != "" {
 			proxyURL += fmt.Sprintf("&referer_b64=%s",
-				base64.StdEncoding.EncodeToString([]byte(proxyReferer)))
+				url.QueryEscape(base64.StdEncoding.EncodeToString([]byte(proxyReferer))))
 		}
 
 		// Replace the src attribute
@@ -226,12 +226,11 @@ func HandleMediaProxy(h *core.Handler, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	client, err := httputil.CreateHTTPClientWithProxySettings(h.DB, 30*time.Second)
+	client, err := h.MediaClient.Get(h.DB, 30*time.Second)
 	if err != nil {
 		response.Error(w, fmt.Errorf("failed to configure media HTTP client"), http.StatusInternalServerError)
 		return
 	}
-	defer client.CloseIdleConnections()
 
 	// Try cache first if enabled
 	if mediaCacheEnabled == "true" {

@@ -88,6 +88,10 @@ type ProxySettingsProvider interface {
 // CreateHTTPClientWithProxySettings creates the canonical application HTTP
 // client and applies the configured global proxy when enabled.
 func CreateHTTPClientWithProxySettings(settings ProxySettingsProvider, timeout time.Duration) (*http.Client, error) {
+	return CreateHTTPClient(proxyURLFromSettings(settings), timeout)
+}
+
+func proxyURLFromSettings(settings ProxySettingsProvider) string {
 	var proxyURL string
 	if settings != nil {
 		proxyEnabled, _ := settings.GetSetting("proxy_enabled")
@@ -101,7 +105,7 @@ func CreateHTTPClientWithProxySettings(settings ProxySettingsProvider, timeout t
 		}
 	}
 
-	return CreateHTTPClient(proxyURL, timeout)
+	return proxyURL
 }
 
 func insecureSkipTLSVerifyEnabled() bool {
