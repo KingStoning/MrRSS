@@ -533,6 +533,28 @@ onUnmounted(() => {
   background-color: rgba(120, 120, 120, 0.15);
   color: #666666;
 }
+/* Library and folders share one compact scroll flow. */
+.category-header,
+.category-header.compact {
+  position: relative;
+  top: auto;
+  margin: 0;
+  min-height: 26px;
+  padding: 6px 10px 3px;
+  font-size: 11px;
+  border-radius: 6px;
+}
+.feeds-list {
+  min-height: 0;
+}
+.category-header :deep(svg) {
+  width: 12px;
+  height: 12px;
+}
+.unread-badge {
+  background: transparent;
+  border-radius: 0;
+}
 </style>
 
 <style>

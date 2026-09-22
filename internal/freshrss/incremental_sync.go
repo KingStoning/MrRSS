@@ -3,11 +3,13 @@ package freshrss
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Reader IDs use decimal in itemRefs and hexadecimal in stream contents.
@@ -73,6 +75,32 @@ func (c *Client) streamIDs(ctx context.Context, stream, exclude string) ([]strin
 }
 
 func (c *Client) itemContents(ctx context.Context, ids []string) ([]Article, error) {
+	var result []Article
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		result, err = c.itemContentsOnce(ctx, ids)
+		if err == nil || ctx.Err() != nil {
+			return result, err
+		}
+		var status *contentHTTPError
+		if errors.As(err, &status) && status.code < 500 && status.code != 429 {
+			return nil, err
+		}
+		if attempt < 2 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 250 * time.Millisecond):
+			}
+		}
+	}
+	return result, err
+}
+
+type contentHTTPError struct{ code int }
+
+func (e *contentHTTPError) Error() string { return fmt.Sprintf("item contents: HTTP %d", e.code) }
+func (c *Client) itemContentsOnce(ctx context.Context, ids []string) ([]Article, error) {
 	data := url.Values{"output": {"json"}}
 	for _, id := range ids {
 		data.Add("i", id)
@@ -89,7 +117,7 @@ func (c *Client) itemContents(ctx context.Context, ids []string) ([]Article, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("item contents: HTTP %d", resp.StatusCode)
+		return nil, &contentHTTPError{resp.StatusCode}
 	}
 	page, err := decodeGoogleReaderStreamContents(resp.Body)
 	if err != nil {
@@ -122,6 +150,9 @@ func (s *BidirectionalSyncService) syncIncremental(ctx context.Context) (int, in
 	if err != nil {
 		return count, pushed, err
 	}
+	if err := s.db.ConsolidateReaderFeeds(ctx, s.provider); err != nil {
+		return count, pushed, fmt.Errorf("link subscriptions: %w", err)
+	}
 	const readingList = "user/-/state/com.google/reading-list"
 	all, err := s.client.streamIDs(ctx, readingList, "")
 	if err != nil {
@@ -135,7 +166,7 @@ func (s *BidirectionalSyncService) syncIncremental(ctx context.Context) (int, in
 	if err != nil {
 		return count, pushed, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT a.freshrss_item_id FROM articles a JOIN feeds f ON f.id=a.feed_id WHERE f.is_freshrss_source=1 AND f.sync_provider=? AND a.freshrss_item_id != ''`, s.provider)
+	rows, err := s.db.QueryContext(ctx, `SELECT a.freshrss_item_id FROM articles a JOIN feeds f ON f.id=a.feed_id JOIN article_contents c ON c.article_id=a.id WHERE f.is_freshrss_source=1 AND f.sync_provider=? AND a.freshrss_item_id != ''`, s.provider)
 	if err != nil {
 		return count, pushed, err
 	}
@@ -154,7 +185,7 @@ func (s *BidirectionalSyncService) syncIncremental(ctx context.Context) (int, in
 		return count, pushed, err
 	}
 	missing := []string{}
-	for _, id := range append(append(all, unread...), starred...) {
+	for _, id := range append(append(append([]string{}, unread...), starred...), all...) {
 		if !known[id] {
 			missing = append(missing, id)
 			known[id] = true

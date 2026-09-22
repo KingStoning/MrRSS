@@ -55,6 +55,7 @@ type Feed struct {
 }
 
 type Article struct {
+	CachedContent         *string   `json:"cached_content,omitempty"`
 	ID                    int64     `json:"id"`
 	FeedID                int64     `json:"feed_id"`
 	Title                 string    `json:"title"`

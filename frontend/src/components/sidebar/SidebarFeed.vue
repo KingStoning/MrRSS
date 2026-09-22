@@ -283,10 +283,10 @@ function handleDragEnd() {
 
 .feed-item {
   @apply cursor-pointer rounded-md text-text-primary flex items-center hover:bg-bg-tertiary transition-colors;
-  min-height: 36px;
-  padding: 4px 8px;
-  gap: 10px;
-  font-size: 14px;
+  min-height: 30px;
+  padding: 0 10px;
+  gap: 9px;
+  font-size: 13px;
   line-height: 1.25;
 }
 
@@ -372,8 +372,8 @@ function handleDragEnd() {
 }
 
 .feed-avatar {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   overflow: hidden;
   border-radius: 5px;
 }

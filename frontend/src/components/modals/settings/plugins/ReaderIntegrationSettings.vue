@@ -128,7 +128,7 @@ onBeforeUnmount(() => {
     </div>
     <NestedSettingsContainer v-if="enabled">
       <p v-if="syncError" role="alert" class="text-sm text-red-500">
-        {{ t('setting.freshrss.syncFailed') }}
+        {{ t('setting.freshrss.syncFailed') }}: {{ syncError }}
       </p>
       <SubSettingItem
         :icon="PhLink"

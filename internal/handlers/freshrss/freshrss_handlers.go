@@ -160,7 +160,14 @@ func HandleSync(h *core.Handler, w http.ResponseWriter, r *http.Request) {
 		if err == nil && result.PullSuccess && result.PushSuccess {
 			_ = h.DB.SetSetting(provider+"_last_sync_time", lastSyncTime)
 		} else {
-			lastSyncErrors.Store(key, "Synchronization failed; check connection and retry")
+			message := "Synchronization failed; check connection and retry"
+			if err != nil {
+				message = err.Error()
+			} else if len(result.Errors) > 0 {
+				message = strings.Join(result.Errors, "; ")
+			}
+			message = strings.ReplaceAll(message, password, "[redacted]")
+			lastSyncErrors.Store(key, message)
 		}
 
 		if err != nil {

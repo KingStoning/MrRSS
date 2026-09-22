@@ -50,6 +50,7 @@ export function useFullArticle(options: Options) {
       if (!current()) return;
       if (typeof data.content !== 'string' || !data.content.trim())
         throw new Error('Empty article');
+      article.cached_content = data.content;
       // The full text replaced the stored body, so the cached copy is stale.
       content.value = cacheEnabled
         ? proxyImagesInHtml(data.content, data.feed_url || article.url)

@@ -637,14 +637,16 @@ function handleFilterDragEnd() {
       :class="[isPinned ? '' : 'shadow-xl']"
     >
       <!-- Search Box -->
-      <div class="mx-4 mt-5 mb-1 overflow-hidden rounded-lg border border-border shrink-0">
+      <div
+        class="sidebar-search mx-3 mt-5 mb-2 overflow-hidden rounded-lg border border-border shrink-0"
+      >
         <div class="flex items-center">
           <div class="relative flex-1">
             <input
               v-model="searchQuery"
               type="text"
               :placeholder="t('common.search.searchFeeds')"
-              class="w-full bg-bg-tertiary px-3 py-2 pl-8 text-sm focus:outline-none transition-colors"
+              class="w-full bg-bg-tertiary px-2 py-1 pl-7 text-xs focus:outline-none transition-colors"
             />
             <PhMagnifyingGlass
               :size="14"
@@ -671,225 +673,227 @@ function handleFilterDragEnd() {
         </div>
       </div>
 
-      <LibraryNavigation />
-      <!-- Drawer Header -->
-      <div
-        class="feed-drawer-header border-b border-border flex items-center justify-between flex-shrink-0"
-      >
-        <h3 class="m-0 text-[13px] font-semibold text-text-secondary">{{ drawerTitle }}</h3>
-        <div class="flex items-center gap-1 sm:gap-2">
-          <!-- Pin/Unpin Button -->
-          <button
-            class="text-text-secondary hover:text-text-primary hover:bg-bg-tertiary p-1 sm:p-1.5 rounded transition-colors"
-            :class="isPinned ? 'text-accent' : ''"
-            :title="isPinned ? t('sidebar.feedList.unpin') : t('sidebar.feedList.pin')"
-            @click="handleTogglePin"
-          >
-            <PhPushPinSlash v-if="isPinned" :size="18" class="sm:w-5 sm:h-5" />
-            <PhPushPin v-else :size="18" class="sm:w-5 sm:h-5" />
-          </button>
-          <div v-if="drawerType === 'feeds'" ref="sortMenuRef" class="relative">
+      <div class="sidebar-scroll sidebar-hover-scrollbar">
+        <LibraryNavigation />
+        <!-- Drawer Header -->
+        <div class="feed-drawer-header flex items-center justify-between flex-shrink-0">
+          <h3 class="m-0 text-[13px] font-semibold text-text-secondary">{{ drawerTitle }}</h3>
+          <div class="flex items-center gap-1 sm:gap-2">
+            <!-- Pin/Unpin Button -->
             <button
-              type="button"
               class="text-text-secondary hover:text-text-primary hover:bg-bg-tertiary p-1 sm:p-1.5 rounded transition-colors"
-              :title="`${t('sidebar.order.sort')}: ${currentSidebarSortLabel}`"
-              :aria-label="t('sidebar.order.sort')"
-              :aria-expanded="showSortMenu"
-              @click="showSortMenu = !showSortMenu"
-              @keydown.esc="showSortMenu = false"
+              :class="isPinned ? 'text-accent' : ''"
+              :title="isPinned ? t('sidebar.feedList.unpin') : t('sidebar.feedList.pin')"
+              @click="handleTogglePin"
             >
-              <PhSortAscending :size="18" class="sm:w-5 sm:h-5" />
+              <PhPushPinSlash v-if="isPinned" :size="18" class="sm:w-5 sm:h-5" />
+              <PhPushPin v-else :size="18" class="sm:w-5 sm:h-5" />
             </button>
-            <Transition
-              enter-active-class="transition duration-100 ease-out"
-              enter-from-class="-translate-y-1 opacity-0"
-              enter-to-class="translate-y-0 opacity-100"
-              leave-active-class="transition duration-75 ease-in"
-              leave-from-class="translate-y-0 opacity-100"
-              leave-to-class="-translate-y-1 opacity-0"
-            >
-              <div
-                v-if="showSortMenu"
-                class="absolute right-0 w-48 top-full z-30 overflow-hidden rounded-lg border border-border bg-bg-primary py-1 shadow-xl"
-              >
-                <button
-                  v-for="mode in sidebarSortModes"
-                  :key="mode"
-                  type="button"
-                  class="flex w-full items-center gap-2 px-2.5 py-2 text-left text-xs text-text-primary transition-colors hover:bg-bg-tertiary"
-                  :class="sidebarSortMode === mode ? 'bg-bg-secondary text-accent' : ''"
-                  @click="selectSidebarSortMode(mode)"
-                >
-                  <PhCheck
-                    :size="14"
-                    class="shrink-0"
-                    :class="sidebarSortMode === mode ? 'opacity-100' : 'opacity-0'"
-                  />
-                  <span>{{ t(`sidebar.order.${mode}`) }}</span>
-                </button>
-              </div>
-            </Transition>
-          </div>
-          <!-- Close Button -->
-          <button
-            class="text-text-secondary hover:text-text-primary hover:bg-bg-tertiary p-1 sm:p-1.5 rounded transition-colors"
-            :title="t('common.close')"
-            @click="handleClose"
-          >
-            <PhX :size="18" class="sm:w-5 sm:h-5" />
-          </button>
-        </div>
-      </div>
-
-      <!-- Drawer Content -->
-      <div class="flex-1 overflow-hidden flex flex-col">
-        <!-- Feeds Drawer (for all filters including imageGallery) -->
-        <template v-if="drawerType === 'feeds'">
-          <!-- Categories List -->
-          <div
-            class="categories-list sidebar-hover-scrollbar flex-1 overflow-y-auto overflow-x-hidden"
-          >
-            <SidebarCategory
-              v-for="[name, data] in categoryEntries(filteredTree.tree)"
-              :key="name"
-              :name="name"
-              :feeds="data._feeds"
-              :children="data._children"
-              :level="0"
-              :is-open="checkIsCategoryOpen(name)"
-              :is-active="store.currentCategory === name"
-              :unread-count="categoryUnreadCounts[name] || 0"
-              :current-feed-id="store.currentFeedId"
-              :feed-unread-counts="feedUnreadCounts"
-              :category-counts="categoryUnreadCounts"
-              :category-entries="categoryEntries"
-              :is-drag-over="dragOverCategory === name"
-              :is-edit-mode="isEditMode"
-              :drop-preview="dropPreview"
-              :dragging-feed-id="draggingFeedId"
-              :drag-over-path="dragOverCategory"
-              :is-category-open="checkIsCategoryOpen"
-              :compact-mode="compactMode"
-              @toggle="() => toggleCategory(name)"
-              @select-category="() => handleSelectCategory(name)"
-              @select-feed="(feedId: number) => handleSelectFeed(feedId)"
-              @category-context-menu="(e: MouseEvent) => onCategoryContextMenu(e, name)"
-              @child-toggle="toggleCategory"
-              @child-select-category="(category: string) => handleSelectCategory(category)"
-              @child-context-menu="(e: MouseEvent, path: string) => onCategoryContextMenu(e, path)"
-              @feed-context-menu="onFeedContextMenu"
-              @dragstart="(feedId: number, e: Event) => handleDragStart(feedId, e)"
-              @dragend="handleDragEnd"
-              @feed-drag-over="handleDragOver"
-              @category-drag-over="
-                (categoryName: string, e: Event) => handleCategoryDragOver(categoryName, e)
-              "
-              @dragleave="(categoryName: string, e: Event) => handleDragLeave(categoryName, e)"
-              @drop="handleDrop"
-            />
-
-            <!-- Uncategorized -->
-            <SidebarCategory
-              v-if="filteredTree.uncategorized.length > 0 || isDragging"
-              :name="t('sidebar.feedList.uncategorized')"
-              :feeds="filteredTree.uncategorized"
-              :is-open="
-                checkIsCategoryOpen('uncategorized') ||
-                (filteredTree.uncategorized.length === 0 && isDragging)
-              "
-              :is-active="store.currentCategory === ''"
-              :is-uncategorized="true"
-              :unread-count="categoryUnreadCounts['uncategorized'] || 0"
-              :current-feed-id="store.currentFeedId"
-              :feed-unread-counts="feedUnreadCounts"
-              :category-counts="categoryUnreadCounts"
-              :category-entries="categoryEntries"
-              :is-drag-over="dragOverCategory === 'uncategorized'"
-              :is-edit-mode="isEditMode"
-              :drop-preview="dropPreview"
-              :dragging-feed-id="draggingFeedId"
-              :drag-over-path="dragOverCategory"
-              :is-category-open="checkIsCategoryOpen"
-              :compact-mode="compactMode"
-              @toggle="toggleCategory('uncategorized')"
-              @select-category="(path: string) => handleSelectCategory(path)"
-              @select-feed="(feedId: number) => handleSelectFeed(feedId)"
-              @category-context-menu="(e: MouseEvent) => onCategoryContextMenu(e, 'uncategorized')"
-              @feed-context-menu="onFeedContextMenu"
-              @dragstart="(feedId: number, e: Event) => handleDragStart(feedId, e)"
-              @dragend="handleDragEnd"
-              @feed-drag-over="handleDragOver"
-              @category-drag-over="
-                (categoryName: string, e: Event) => handleCategoryDragOver(categoryName, e)
-              "
-              @dragleave="(categoryName: string, e: Event) => handleDragLeave(categoryName, e)"
-              @drop="handleDrop"
-            />
-          </div>
-
-          <!-- Saved Filters Section - positioned at bottom, only show when viewing All Articles -->
-          <div
-            v-if="
-              store.currentFilter === 'all' && (hasActiveFilters || safeSavedFilters.length > 0)
-            "
-            class="flex-shrink-0 max-h-[50%] flex flex-col border-t border-border"
-          >
-            <!-- Saved Filters Header -->
-            <div
-              :class="[
-                'flex-shrink-0 transition-colors duration-200 bg-bg-secondary cursor-default flex items-center justify-between',
-                compactMode ? 'px-1.5 sm:px-2 py-1 sm:py-1.5' : 'px-3 py-1.5 sm:px-3 sm:py-2',
-              ]"
-            >
-              <div class="flex items-center gap-1.5 sm:gap-2">
-                <span class="font-semibold text-xs sm:text-sm text-text-secondary">
-                  {{ t('sidebar.savedFilters.title') }}
-                </span>
-              </div>
-
-              <!-- Save Current Filter Button -->
+            <div v-if="drawerType === 'feeds'" ref="sortMenuRef" class="relative">
               <button
-                :class="[
-                  'bg-transparent border-0 cursor-pointer text-text-secondary rounded transition-all duration-200 flex items-center justify-center hover:not(:disabled):bg-bg-tertiary hover:not(:disabled):text-accent disabled:opacity-40 disabled:cursor-not-allowed',
-                  'w-8 h-8',
-                ]"
-                :disabled="!hasActiveFilters"
-                :title="
-                  !hasActiveFilters
-                    ? t('sidebar.savedFilters.conditionsRequired')
-                    : t('sidebar.savedFilters.saveCurrentFilter')
-                "
-                @click="openSaveModal"
+                type="button"
+                class="text-text-secondary hover:text-text-primary hover:bg-bg-tertiary p-1 sm:p-1.5 rounded transition-colors"
+                :title="`${t('sidebar.order.sort')}: ${currentSidebarSortLabel}`"
+                :aria-label="t('sidebar.order.sort')"
+                :aria-expanded="showSortMenu"
+                @click="showSortMenu = !showSortMenu"
+                @keydown.esc="showSortMenu = false"
               >
-                <PhFloppyDisk :size="18" />
+                <PhSortAscending :size="18" class="sm:w-5 sm:h-5" />
               </button>
+              <Transition
+                enter-active-class="transition duration-100 ease-out"
+                enter-from-class="-translate-y-1 opacity-0"
+                enter-to-class="translate-y-0 opacity-100"
+                leave-active-class="transition duration-75 ease-in"
+                leave-from-class="translate-y-0 opacity-100"
+                leave-to-class="-translate-y-1 opacity-0"
+              >
+                <div
+                  v-if="showSortMenu"
+                  class="absolute right-0 w-48 top-full z-30 overflow-hidden rounded-lg border border-border bg-bg-primary py-1 shadow-xl"
+                >
+                  <button
+                    v-for="mode in sidebarSortModes"
+                    :key="mode"
+                    type="button"
+                    class="flex w-full items-center gap-2 px-2.5 py-2 text-left text-xs text-text-primary transition-colors hover:bg-bg-tertiary"
+                    :class="sidebarSortMode === mode ? 'bg-bg-secondary text-accent' : ''"
+                    @click="selectSidebarSortMode(mode)"
+                  >
+                    <PhCheck
+                      :size="14"
+                      class="shrink-0"
+                      :class="sidebarSortMode === mode ? 'opacity-100' : 'opacity-0'"
+                    />
+                    <span>{{ t(`sidebar.order.${mode}`) }}</span>
+                  </button>
+                </div>
+              </Transition>
             </div>
-
-            <!-- Saved Filters List -->
-            <div
-              :class="[
-                'sidebar-hover-scrollbar flex-1 overflow-y-auto min-h-0',
-                compactMode ? 'py-0.5 sm:py-1' : 'pt-1 pb-1 sm:pt-1.5 sm:pb-1.5',
-              ]"
+            <!-- Close Button -->
+            <button
+              class="text-text-secondary hover:text-text-primary hover:bg-bg-tertiary p-1 sm:p-1.5 rounded transition-colors"
+              :title="t('common.close')"
+              @click="handleClose"
             >
-              <SavedFilterItem
-                v-for="filter in safeSavedFilters"
-                :key="filter.id"
-                :filter="filter"
-                :is-active="isFilterActive(filter)"
-                :is-dragging="draggingFilterId === filter.id"
+              <PhX :size="18" class="sm:w-5 sm:h-5" />
+            </button>
+          </div>
+        </div>
+
+        <!-- Drawer Content -->
+        <div class="flex flex-col">
+          <!-- Feeds Drawer (for all filters including imageGallery) -->
+          <template v-if="drawerType === 'feeds'">
+            <!-- Categories List -->
+            <div class="categories-list">
+              <SidebarCategory
+                v-for="[name, data] in categoryEntries(filteredTree.tree)"
+                :key="name"
+                :name="name"
+                :feeds="data._feeds"
+                :children="data._children"
+                :level="0"
+                :is-open="checkIsCategoryOpen(name)"
+                :is-active="store.currentCategory === name"
+                :unread-count="categoryUnreadCounts[name] || 0"
+                :current-feed-id="store.currentFeedId"
+                :feed-unread-counts="feedUnreadCounts"
+                :category-counts="categoryUnreadCounts"
+                :category-entries="categoryEntries"
+                :is-drag-over="dragOverCategory === name"
                 :is-edit-mode="isEditMode"
+                :drop-preview="dropPreview"
+                :dragging-feed-id="draggingFeedId"
+                :drag-over-path="dragOverCategory"
+                :is-category-open="checkIsCategoryOpen"
                 :compact-mode="compactMode"
-                @click="applySavedFilter(filter)"
-                @contextmenu="onFilterContextMenu($event, filter)"
-                @dragstart="handleFilterDragStart(filter.id)"
-                @dragend="handleFilterDragEnd"
-                @edit="openEditModal"
-                @delete="handleDeleteFilter"
+                @toggle="() => toggleCategory(name)"
+                @select-category="() => handleSelectCategory(name)"
+                @select-feed="(feedId: number) => handleSelectFeed(feedId)"
+                @category-context-menu="(e: MouseEvent) => onCategoryContextMenu(e, name)"
+                @child-toggle="toggleCategory"
+                @child-select-category="(category: string) => handleSelectCategory(category)"
+                @child-context-menu="
+                  (e: MouseEvent, path: string) => onCategoryContextMenu(e, path)
+                "
+                @feed-context-menu="onFeedContextMenu"
+                @dragstart="(feedId: number, e: Event) => handleDragStart(feedId, e)"
+                @dragend="handleDragEnd"
+                @feed-drag-over="handleDragOver"
+                @category-drag-over="
+                  (categoryName: string, e: Event) => handleCategoryDragOver(categoryName, e)
+                "
+                @dragleave="(categoryName: string, e: Event) => handleDragLeave(categoryName, e)"
+                @drop="handleDrop"
+              />
+
+              <!-- Uncategorized -->
+              <SidebarCategory
+                v-if="filteredTree.uncategorized.length > 0 || isDragging"
+                :name="t('sidebar.feedList.uncategorized')"
+                :feeds="filteredTree.uncategorized"
+                :is-open="
+                  checkIsCategoryOpen('uncategorized') ||
+                  (filteredTree.uncategorized.length === 0 && isDragging)
+                "
+                :is-active="store.currentCategory === ''"
+                :is-uncategorized="true"
+                :unread-count="categoryUnreadCounts['uncategorized'] || 0"
+                :current-feed-id="store.currentFeedId"
+                :feed-unread-counts="feedUnreadCounts"
+                :category-counts="categoryUnreadCounts"
+                :category-entries="categoryEntries"
+                :is-drag-over="dragOverCategory === 'uncategorized'"
+                :is-edit-mode="isEditMode"
+                :drop-preview="dropPreview"
+                :dragging-feed-id="draggingFeedId"
+                :drag-over-path="dragOverCategory"
+                :is-category-open="checkIsCategoryOpen"
+                :compact-mode="compactMode"
+                @toggle="toggleCategory('uncategorized')"
+                @select-category="(path: string) => handleSelectCategory(path)"
+                @select-feed="(feedId: number) => handleSelectFeed(feedId)"
+                @category-context-menu="
+                  (e: MouseEvent) => onCategoryContextMenu(e, 'uncategorized')
+                "
+                @feed-context-menu="onFeedContextMenu"
+                @dragstart="(feedId: number, e: Event) => handleDragStart(feedId, e)"
+                @dragend="handleDragEnd"
+                @feed-drag-over="handleDragOver"
+                @category-drag-over="
+                  (categoryName: string, e: Event) => handleCategoryDragOver(categoryName, e)
+                "
+                @dragleave="(categoryName: string, e: Event) => handleDragLeave(categoryName, e)"
+                @drop="handleDrop"
               />
             </div>
-          </div>
-        </template>
+
+            <!-- Saved Filters Section - positioned at bottom, only show when viewing All Articles -->
+            <div
+              v-if="
+                store.currentFilter === 'all' && (hasActiveFilters || safeSavedFilters.length > 0)
+              "
+              class="flex-shrink-0 max-h-[50%] flex flex-col border-t border-border"
+            >
+              <!-- Saved Filters Header -->
+              <div
+                :class="[
+                  'flex-shrink-0 transition-colors duration-200 bg-bg-secondary cursor-default flex items-center justify-between',
+                  compactMode ? 'px-1.5 sm:px-2 py-1 sm:py-1.5' : 'px-3 py-1.5 sm:px-3 sm:py-2',
+                ]"
+              >
+                <div class="flex items-center gap-1.5 sm:gap-2">
+                  <span class="font-semibold text-xs sm:text-sm text-text-secondary">
+                    {{ t('sidebar.savedFilters.title') }}
+                  </span>
+                </div>
+
+                <!-- Save Current Filter Button -->
+                <button
+                  :class="[
+                    'bg-transparent border-0 cursor-pointer text-text-secondary rounded transition-all duration-200 flex items-center justify-center hover:not(:disabled):bg-bg-tertiary hover:not(:disabled):text-accent disabled:opacity-40 disabled:cursor-not-allowed',
+                    'w-8 h-8',
+                  ]"
+                  :disabled="!hasActiveFilters"
+                  :title="
+                    !hasActiveFilters
+                      ? t('sidebar.savedFilters.conditionsRequired')
+                      : t('sidebar.savedFilters.saveCurrentFilter')
+                  "
+                  @click="openSaveModal"
+                >
+                  <PhFloppyDisk :size="18" />
+                </button>
+              </div>
+
+              <!-- Saved Filters List -->
+              <div
+                :class="[
+                  'sidebar-hover-scrollbar flex-1 overflow-y-auto min-h-0',
+                  compactMode ? 'py-0.5 sm:py-1' : 'pt-1 pb-1 sm:pt-1.5 sm:pb-1.5',
+                ]"
+              >
+                <SavedFilterItem
+                  v-for="filter in safeSavedFilters"
+                  :key="filter.id"
+                  :filter="filter"
+                  :is-active="isFilterActive(filter)"
+                  :is-dragging="draggingFilterId === filter.id"
+                  :is-edit-mode="isEditMode"
+                  :compact-mode="compactMode"
+                  @click="applySavedFilter(filter)"
+                  @contextmenu="onFilterContextMenu($event, filter)"
+                  @dragstart="handleFilterDragStart(filter.id)"
+                  @dragend="handleFilterDragEnd"
+                  @edit="openEditModal"
+                  @delete="handleDeleteFilter"
+                />
+              </div>
+            </div>
+          </template>
+        </div>
       </div>
       <LibraryActions />
     </div>
@@ -926,17 +930,37 @@ function handleFilterDragEnd() {
 
 <style scoped>
 .feed-drawer-width {
-  width: 280px;
-  min-width: 280px;
+  width: 244px;
+  min-width: 244px;
   background: var(--paper-bg);
 }
 
 .feed-drawer-header {
-  min-height: 48px;
-  padding: 8px 10px;
+  min-height: 32px;
+  padding: 6px 10px 3px;
   background: var(--paper-bg);
 }
 
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 8px 12px;
+}
+.sidebar-search {
+  height: 28px;
+}
+.feed-drawer-header :deep(svg) {
+  width: 14px;
+  height: 14px;
+}
+.feed-drawer-header h3 {
+  font-size: 11px;
+}
+.feed-drawer-header button {
+  padding: 2px;
+}
 .sidebar-hover-scrollbar {
   scrollbar-gutter: stable;
 }
@@ -972,8 +996,8 @@ function handleFilterDragEnd() {
 /* Responsive width for feed drawer on medium screens */
 @media (max-width: 1400px) {
   .feed-drawer-width {
-    width: 260px;
-    min-width: 260px;
+    width: 244px;
+    min-width: 244px;
   }
 }
 </style>

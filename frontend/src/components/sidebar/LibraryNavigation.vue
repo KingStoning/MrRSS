@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { PhTray, PhCircle, PhStar, PhBookmarkSimple, PhImages } from '@phosphor-icons/vue';
+import { PhTray, PhCircle, PhStar, PhBookmarkSimple } from '@phosphor-icons/vue';
 import { useAppStore } from '@/stores/app';
 import { useSettings } from '@/composables/core/useSettings';
 import { useArticleFilter } from '@/composables/article/useArticleFilter';
@@ -14,9 +14,6 @@ const items = computed(() => [
   { id: 'unread', icon: PhCircle, label: t('sidebar.feedList.unread') },
   { id: 'favorites', icon: PhStar, label: t('sidebar.activity.favorites') },
   { id: 'readLater', icon: PhBookmarkSimple, label: t('sidebar.activity.readLater') },
-  ...(settings.value.image_gallery_enabled
-    ? [{ id: 'imageGallery', icon: PhImages, label: t('sidebar.activity.imageGallery') }]
-    : []),
 ]);
 function select(id: string) {
   clearAllFilters();
@@ -36,7 +33,7 @@ function select(id: string) {
       }"
       @click="select(item.id)"
     >
-      <component :is="item.icon" :size="20" />
+      <component :is="item.icon" :size="16" />
       <span>{{ item.label }}</span>
       <span
         v-if="item.id === 'unread' && settings.show_unread_counts && store.unreadCounts?.total"
@@ -49,26 +46,26 @@ function select(id: string) {
 
 <style scoped>
 .library-navigation {
-  padding: 22px 14px 8px;
+  padding: 12px 0 10px;
   font-family: var(--ui-font-family);
   flex-shrink: 0;
 }
 .library-label {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  padding: 0 8px 10px;
+  padding: 0 10px 6px;
 }
 .library-item {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 9px;
   width: 100%;
-  min-height: 38px;
-  padding: 7px 9px;
+  height: 30px;
+  padding: 0 10px;
   border-radius: 7px;
   text-align: left;
-  font-size: 14px;
+  font-size: 13px;
 }
 .library-item svg {
   color: var(--text-secondary);
@@ -83,6 +80,6 @@ function select(id: string) {
 .library-count {
   margin-left: auto;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11px;
 }
 </style>

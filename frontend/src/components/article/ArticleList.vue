@@ -1172,6 +1172,7 @@ async function cardModalReloadContent(): Promise<void> {
       throw new Error(t('common.errors.fetchingArticleContent'));
     }
     invalidateArticleContent(article.id);
+    article.cached_content = undefined;
     await openCardModal(article);
   } catch (e) {
     console.error('Error reloading article content:', e);

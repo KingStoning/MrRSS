@@ -8,6 +8,7 @@ export interface Tag {
 }
 
 export interface Article {
+  cached_content?: string;
   id: number;
   feed_id: number;
   feed_title?: string;
